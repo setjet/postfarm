@@ -5,7 +5,7 @@
 import { homedir } from 'node:os'
 import { join, dirname, extname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, rmSync } from 'node:fs'
 import { logger } from './log.js'
 
 const log = logger('scrape')
@@ -99,8 +99,15 @@ export function getScrapedFile(id) {
 }
 
 export function removeScraped(id) {
-  const next = scrapedIndex().filter((s) => s.id !== id)
-  writeJson(INDEX_PATH, next)
+  const index = scrapedIndex()
+  const rec = index.find((s) => s.id === id)
+  // Delete the actual file too — otherwise reconcileOrphans() sees an
+  // un-indexed file on disk and immediately re-adds it ("zombie" delete).
+  if (rec) {
+    const p = join(MEDIA_DIR, rec.file)
+    if (existsSync(p)) rmSync(p)
+  }
+  writeJson(INDEX_PATH, index.filter((s) => s.id !== id))
   return listLibrary()
 }
 function writeJson(p, v) {

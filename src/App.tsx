@@ -101,18 +101,20 @@ export default function App() {
     scheduledAt: string | null;
   }) => {
     if (!scheduling) return;
+    const scheduledId = scheduling.id;
     const slides = await renderSlideshow(scheduling);
     await api.schedule({
-      id: scheduling.id,
+      id: scheduledId,
       caption: `${scheduling.caption}${scheduling.hashtags.length ? ' ' + scheduling.hashtags.map((t) => `#${t}`).join(' ') : ''}`,
       slides,
       socialAccounts: opts.socialAccounts,
       scheduledAt: opts.scheduledAt,
       mode: opts.mode,
     });
-    // Drop the now-scheduled slideshow from the queue, but leave the modal open —
-    // it shows a success state with a link to post-bridge instead of us jumping
-    // to the Schedule tab (where the brand-new post often isn't visible yet).
+    // Drop the now-scheduled slideshow from the queue immediately (optimistic),
+    // then reconcile with the server. The modal stays open showing its success
+    // state with a link to post-bridge instead of us jumping to the Schedule tab.
+    setQueue((q) => q.filter((s) => s.id !== scheduledId));
     setQueue(await api.getQueue());
   };
 
@@ -248,7 +250,13 @@ export default function App() {
           slideshows={queue.filter((s) => selectedIds.includes(s.id))}
           accounts={accounts}
           defaults={activeProject.defaults}
-          onClose={() => setBulkOpen(false)}
+          // Closing via the X/backdrop must still drop any now-scheduled items
+          // from the queue — otherwise it looks stale until a browser reload.
+          onClose={async () => {
+            setBulkOpen(false);
+            setSelectedIds([]);
+            setQueue(await api.getQueue());
+          }}
           onDone={bulkDone}
         />
       )}
