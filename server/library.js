@@ -2,7 +2,7 @@
 // any images the user scrapes from Pinterest with their own Apify key. Scraped
 // images are downloaded to ~/.slidesmith/library/ so the browser can composite
 // them onto the export canvas same-origin (remote URLs would taint it).
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join, dirname, extname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, rmSync } from 'node:fs'
@@ -10,7 +10,8 @@ import { logger } from './log.js'
 
 const log = logger('scrape')
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const DIR = process.env.SLIDESMITH_DIR || join(homedir(), '.slidesmith')
+const DEFAULT_DIR = process.env.VERCEL ? join(tmpdir(), '.slidesmith') : join(homedir(), '.slidesmith')
+const DIR = process.env.SLIDESMITH_DIR || DEFAULT_DIR
 const MEDIA_DIR = join(DIR, 'library')
 const INDEX_PATH = join(DIR, 'library.json')
 const BUNDLED_MANIFEST = join(__dirname, '..', 'public', 'library', 'manifest.json')

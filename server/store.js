@@ -5,12 +5,13 @@
 // A "project" is one brand/account you generate for. Only the Brain and the
 // default post-bridge accounts differ per project; the API keys and model are
 // global. The queue (generated-but-unscheduled drafts) is per project.
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { bundledPackNames } from './library.js'
 
-const DIR = process.env.SLIDESMITH_DIR || join(homedir(), '.slidesmith')
+const DEFAULT_DIR = process.env.VERCEL ? join(tmpdir(), '.slidesmith') : join(homedir(), '.slidesmith')
+const DIR = process.env.SLIDESMITH_DIR || DEFAULT_DIR
 const CONFIG_PATH = join(DIR, 'config.json')
 const QUEUE_PATH = join(DIR, 'queue.json')
 

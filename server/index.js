@@ -42,6 +42,7 @@ app.use(express.json({ limit: '50mb' })) // base64 slide images can be large
 // same-origin policy. Rejecting unexpected Host headers closes that hole.
 const ALLOWED_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', process.env.HOST].filter(Boolean))
 app.use((req, res, next) => {
+  if (process.env.VERCEL) return next()
   const host = String(req.headers.host || '').replace(/:\d+$/, '')
   if (!ALLOWED_HOSTS.has(host)) return res.status(403).json({ error: `Forbidden host: ${host}` })
   next()
@@ -241,7 +242,11 @@ if (existsSync(dist)) {
   })
 }
 
+if (!process.env.VERCEL) {
 app.listen(PORT, HOST, () => {
   console.log(`\n  Slidesmith server → http://localhost:${PORT} (bound to ${HOST})`)
   console.log(`  Config + queue stored in ${CONFIG_DIR}\n`)
 })
+}
+
+export default app
