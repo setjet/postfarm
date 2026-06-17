@@ -1,4 +1,4 @@
-export type ViewKey = 'queue' | 'library' | 'schedule' | 'results' | 'brain' | 'settings';
+export type ViewKey = 'queue' | 'trends' | 'library' | 'schedule' | 'results' | 'brain' | 'settings';
 
 export interface Slide {
   id: string;
@@ -12,12 +12,47 @@ export interface Slide {
 
 export interface Slideshow {
   id: string;
+  format?: 'standard' | 'notes';
   hook: string;
   caption: string;
   hashtags: string[];
   slides: Slide[];
   createdAt: string;
   rationale: string;
+  notesData?: NotesData;
+  qualityScore?: number;
+  qualityBreakdown?: QualityBreakdown;
+  qualityFeedback?: string;
+  qualityStatus?: 'strong' | 'ready' | 'needs-review' | 'weak';
+  rewriteAttempts?: number;
+  trendSourcesUsed?: string[];
+  generationMode?: string;
+  contentBucket?: string;
+  ctaKeyword?: string;
+}
+
+export interface NotesData {
+  hookText: string;
+  noteTitle?: string;
+  noteDate?: string;
+  points: NotesPoint[];
+}
+
+export interface NotesPoint {
+  heading: string;
+  body: string;
+}
+
+export interface QualityBreakdown {
+  hookStrength?: number;
+  clarity?: number;
+  originality?: number;
+  brandFit?: number;
+  audienceFit?: number;
+  ctaStrength?: number;
+  viralPotential?: number;
+  usefulness?: number;
+  nonGenericWording?: number;
 }
 
 export interface BrainState {
@@ -61,6 +96,38 @@ export interface LibraryPack {
   source: 'bundled' | 'scraped';
   count: number;
   covers: string[];
+}
+
+export interface TrendItem {
+  id: string;
+  hook: string;
+  caption: string;
+  hashtags: string[];
+  postUrl: string;
+  platform: string;
+  author: string;
+  views: number | null;
+  likes: number | null;
+  comments: number | null;
+  shares: number | null;
+  duration: number | null;
+  uploadDate: string | null;
+  scrapedAt: string;
+  contentType: string;
+  query: string;
+}
+
+export interface LearningMemory {
+  projectId: string;
+  generatedAt: string;
+  sourcePostCount: number;
+  summary: string;
+  working: string[];
+  avoid: string[];
+  bestCtas: string[];
+  bestHookFormulas: string[];
+  recommendedNextPosts: string[];
+  suggestedBuckets: string[];
 }
 
 export interface VideoAsset {

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Eye, Heart, MessageCircle, Share2, Loader2, RefreshCw } from 'lucide-react';
-import type { PostResult } from '../types';
+import { Eye, Heart, MessageCircle, Share2, Loader2, RefreshCw, Brain, Trash2 } from 'lucide-react';
+import type { LearningMemory, PostResult } from '../types';
 import { ViewHeader } from '../components/ViewHeader';
-import { getResults, syncResults } from '../lib/api';
+import { Button } from '../components/Button';
+import { clearLearning, getLearning, getResults, rebuildLearning, syncResults } from '../lib/api';
 
 interface ResultsViewProps {
   configured: boolean;
@@ -18,12 +19,18 @@ export function ResultsView({ configured }: ResultsViewProps) {
   const [results, setResults] = useState<PostResult[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [learning, setLearning] = useState<LearningMemory | null>(null);
+  const [learningBusy, setLearningBusy] = useState(false);
+  const [learningError, setLearningError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!configured) return;
     getResults()
       .then(setResults)
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+    getLearning()
+      .then(setLearning)
+      .catch(() => setLearning(null));
   }, [configured]);
 
   // Refresh pulls fresh metrics from the platforms (post-bridge sync) first,
@@ -40,6 +47,33 @@ export function ResultsView({ configured }: ResultsViewProps) {
       setRefreshing(false);
     }
   }, [configured]);
+
+  const rebuild = useCallback(async () => {
+    if (!configured) return;
+    setLearningBusy(true);
+    setLearningError(null);
+    try {
+      setLearning(await rebuildLearning());
+    } catch (e) {
+      setLearningError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLearningBusy(false);
+    }
+  }, [configured]);
+
+  const clear = useCallback(async () => {
+    if (!window.confirm('Clear saved learning memory for this project?')) return;
+    setLearningBusy(true);
+    setLearningError(null);
+    try {
+      await clearLearning();
+      setLearning(null);
+    } catch (e) {
+      setLearningError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLearningBusy(false);
+    }
+  }, []);
 
   const totalViews = results?.reduce((s, r) => s + r.views, 0) ?? 0;
   const totalLikes = results?.reduce((s, r) => s + r.likes, 0) ?? 0;
@@ -73,6 +107,46 @@ export function ResultsView({ configured }: ResultsViewProps) {
           </div>
         )}
 
+        {configured && (
+          <div className="px-4 sm:px-8 py-4 border-b border-line">
+            <div className="max-w-5xl mx-auto">
+              <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+                <div>
+                  <h2 className="text-[13px] font-semibold text-ink flex items-center gap-2">
+                    <Brain size={15} className="text-accent" /> Learning memory
+                  </h2>
+                  <p className="text-[12px] text-ink-5 mt-1">
+                    Summarizes what performs best so future generations can use it.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {learning && (
+                    <Button variant="danger-ghost" icon={<Trash2 size={13} />} onClick={clear} disabled={learningBusy}>
+                      Clear
+                    </Button>
+                  )}
+                  <Button
+                    variant="secondary"
+                    icon={learningBusy ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                    onClick={rebuild}
+                    disabled={learningBusy}
+                  >
+                    {learningBusy ? 'Rebuilding...' : 'Rebuild insights'}
+                  </Button>
+                </div>
+              </div>
+              {learningError && <p className="text-[12px] text-danger mb-3">{learningError}</p>}
+              {learning ? (
+                <LearningBlocks memory={learning} />
+              ) : (
+                <div className="rounded-xl border border-line bg-surface p-4 text-[12px] text-ink-5">
+                  No learning memory saved yet. Rebuild insights after analytics are available.
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         <div className="p-4 sm:p-8">
           <div className="max-w-5xl mx-auto flex flex-col gap-3">
             {!configured ? (
@@ -98,6 +172,45 @@ function Stat({ label, value }: { label: string; value: string }) {
     <div className="rounded-xl border border-line bg-surface px-4 py-3 shadow-main">
       <div className="text-[10px] text-ink-6 uppercase tracking-[0.12em]">{label}</div>
       <div className="text-[22px] font-semibold text-ink leading-none mt-1">{value}</div>
+    </div>
+  );
+}
+
+function LearningBlocks({ memory }: { memory: LearningMemory }) {
+  return (
+    <div className="rounded-xl border border-line bg-surface p-4 shadow-main">
+      <div className="text-[12px] text-ink-4 leading-relaxed mb-3">{memory.summary}</div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <InsightList title="What is working" items={memory.working} />
+        <InsightList title="What to avoid" items={memory.avoid} />
+        <InsightList title="Best CTA keywords" items={memory.bestCtas} />
+        <InsightList title="Best hook formulas" items={memory.bestHookFormulas} />
+        <InsightList title="Recommended next posts" items={memory.recommendedNextPosts} />
+        <InsightList title="Suggested buckets" items={memory.suggestedBuckets} />
+      </div>
+      <p className="text-[10px] text-ink-6 mt-3">
+        Built from {memory.sourcePostCount} post{memory.sourcePostCount === 1 ? '' : 's'}
+        {memory.generatedAt ? ` on ${new Date(memory.generatedAt).toLocaleDateString()}` : ''}.
+      </p>
+    </div>
+  );
+}
+
+function InsightList({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className="rounded-lg border border-line bg-[#101010] p-3">
+      <div className="text-[10px] text-ink-6 uppercase tracking-[0.12em] mb-2">{title}</div>
+      {items?.length ? (
+        <ul className="space-y-1.5">
+          {items.slice(0, 5).map((item, i) => (
+            <li key={`${item}-${i}`} className="text-[12px] text-ink-4 leading-snug">
+              {item}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-[12px] text-ink-6">Not enough signal yet.</p>
+      )}
     </div>
   );
 }

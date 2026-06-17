@@ -50,6 +50,29 @@ function drawCover(ctx: CanvasRenderingContext2D, img: HTMLImageElement) {
   ctx.drawImage(img, (W - w) / 2, (H - h) / 2, w, h);
 }
 
+function fillSlideBackground(ctx: CanvasRenderingContext2D, slide: Slide) {
+  const grad = ctx.createLinearGradient(0, 0, W, H);
+  grad.addColorStop(0, slide.bgFrom || '#0f172a');
+  grad.addColorStop(1, slide.bgTo || '#1e293b');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+}
+
+async function drawImageOrGradient(ctx: CanvasRenderingContext2D, slide: Slide, darken = 0.45) {
+  if (slide.imageUrl) {
+    try {
+      const img = await loadImage(slide.imageUrl);
+      drawCover(ctx, img);
+      ctx.fillStyle = `rgba(0,0,0,${darken})`;
+      ctx.fillRect(0, 0, W, H);
+      return;
+    } catch {
+      // fall through to gradient
+    }
+  }
+  fillSlideBackground(ctx, slide);
+}
+
 export async function renderSlide(slide: Slide): Promise<string> {
   // Make sure the web font is ready, otherwise the first render uses a fallback.
   if (document.fonts?.ready) await document.fonts.ready;
@@ -117,7 +140,207 @@ export async function renderSlide(slide: Slide): Promise<string> {
   return canvas.toDataURL('image/png');
 }
 
+function notesDataFrom(show: Slideshow) {
+  const fallbackText = show.slides?.[1]?.text || show.caption || '';
+  return show.notesData || {
+    hookText: show.hook || show.slides?.[0]?.text || '',
+    noteTitle: 'notes',
+    points: fallbackText
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(0, 5)
+      .map((line) => ({ heading: line, body: '' })),
+  };
+}
+
+function stripPointNumber(text: string) {
+  return String(text || '').replace(/^\s*(?:\d+[).:-]\s*)+/, '').trim();
+}
+
+function notesText(text: string) {
+  return String(text || '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+async function renderNotesHookSlide(show: Slideshow): Promise<string> {
+  if (document.fonts?.ready) await document.fonts.ready;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext('2d')!;
+  const slide = show.slides[0] || {};
+  await drawImageOrGradient(ctx, slide, 0.42);
+
+  const text = notesDataFrom(show).hookText || show.hook || slide.text || '';
+  const fontPx = 84;
+  const lineHeight = 96;
+  const maxWidth = W - 180;
+  ctx.font = `900 ${fontPx}px Inter, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.lineJoin = 'round';
+  const lines = wrap(ctx, text.toLowerCase(), maxWidth);
+  const blockH = lines.length * lineHeight;
+  const y = H * 0.58 - blockH / 2;
+  for (let i = 0; i < lines.length; i++) {
+    const yy = y + i * lineHeight;
+    ctx.strokeStyle = 'rgba(0,0,0,0.9)';
+    ctx.lineWidth = 10;
+    ctx.strokeText(lines[i], W / 2, yy);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(lines[i], W / 2, yy);
+  }
+
+  return canvas.toDataURL('image/png');
+}
+
+function notesMetrics(scale: number, gapScale: number) {
+  const px = (value: number, min: number) => Math.max(min, Math.round(value * scale));
+  const gap = (value: number, min: number) => Math.max(min, Math.round(value * gapScale));
+  return {
+    margin: 96,
+    topY: 128,
+    bottomY: H - 116,
+    datePx: px(38, 28),
+    titlePx: px(64, 46),
+    headingPx: px(46, 34),
+    bodyPx: px(39, 30),
+    dateGap: gap(72, 44),
+    titleGap: gap(46, 22),
+    pointGap: gap(42, 18),
+    bodyTopGap: gap(12, 6),
+  };
+}
+
+type NotesMetrics = ReturnType<typeof notesMetrics>;
+
+function font(weight: number, px: number) {
+  return `${weight} ${px}px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+}
+
+function preparedPoints(data: ReturnType<typeof notesDataFrom>) {
+  return data.points.slice(0, 5).map((point) => ({
+    heading: stripPointNumber(point.heading),
+    body: notesText(point.body),
+  })).filter((point) => point.heading || point.body);
+}
+
+function measureNotes(ctx: CanvasRenderingContext2D, data: ReturnType<typeof notesDataFrom>, m: NotesMetrics) {
+  const maxWidth = W - m.margin * 2;
+  let total = Math.round(m.datePx * 1.25) + m.dateGap;
+  if (data.noteTitle) {
+    ctx.font = font(700, m.titlePx);
+    total += wrap(ctx, notesText(data.noteTitle), maxWidth).length * Math.round(m.titlePx * 1.12) + m.titleGap;
+  }
+  const points = preparedPoints(data);
+  points.forEach((point, index) => {
+    ctx.font = font(700, m.headingPx);
+    total += wrap(ctx, `${index + 1}. ${notesText(point.heading)}`, maxWidth).length * Math.round(m.headingPx * 1.18);
+    if (point.body) {
+      ctx.font = font(400, m.bodyPx);
+      total += m.bodyTopGap + wrap(ctx, point.body, maxWidth).length * Math.round(m.bodyPx * 1.28);
+    }
+    if (index < points.length - 1) total += m.pointGap;
+  });
+  return total;
+}
+
+function fitNotesMetrics(ctx: CanvasRenderingContext2D, data: ReturnType<typeof notesDataFrom>) {
+  const available = H - 128 - 116;
+  for (let scale = 1; scale >= 0.72; scale -= 0.035) {
+    for (let gapScale = 1; gapScale >= 0.55; gapScale -= 0.075) {
+      const m = notesMetrics(scale, gapScale);
+      if (measureNotes(ctx, data, m) <= available) return m;
+    }
+  }
+  return notesMetrics(0.72, 0.55);
+}
+
+function drawWrappedLines(
+  ctx: CanvasRenderingContext2D,
+  lines: string[],
+  x: number,
+  y: number,
+  lineHeight: number,
+  fillStyle: string
+) {
+  ctx.fillStyle = fillStyle;
+  lines.forEach((line, index) => ctx.fillText(line, x, y + index * lineHeight));
+  return lines.length * lineHeight;
+}
+
+async function renderNotesValueSlide(show: Slideshow): Promise<string> {
+  if (document.fonts?.ready) await document.fonts.ready;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext('2d')!;
+  const data = notesDataFrom(show);
+  const points = preparedPoints(data);
+
+  ctx.fillStyle = '#fffdf8';
+  ctx.fillRect(0, 0, W, H);
+
+  const m = fitNotesMetrics(ctx, data);
+  const maxWidth = W - m.margin * 2;
+  const date = data.noteDate || new Date().toLocaleString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+  let y = m.topY;
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.font = font(500, m.datePx);
+  drawWrappedLines(ctx, [notesText(date)], W / 2, y, Math.round(m.datePx * 1.25), '#a5a29b');
+  y += Math.round(m.datePx * 1.25) + m.dateGap;
+
+  ctx.textAlign = 'left';
+  if (data.noteTitle) {
+    ctx.font = font(700, m.titlePx);
+    const titleLineHeight = Math.round(m.titlePx * 1.12);
+    const titleLines = wrap(ctx, notesText(data.noteTitle), maxWidth);
+    y += drawWrappedLines(ctx, titleLines, m.margin, y, titleLineHeight, '#1d1d1f') + m.titleGap;
+  }
+
+  points.forEach((point, index) => {
+    const headingLineHeight = Math.round(m.headingPx * 1.18);
+    const bodyLineHeight = Math.round(m.bodyPx * 1.28);
+    ctx.font = font(700, m.headingPx);
+    const headingLines = wrap(ctx, `${index + 1}. ${notesText(point.heading)}`, maxWidth);
+    if (y + headingLines.length * headingLineHeight > m.bottomY) return;
+    y += drawWrappedLines(ctx, headingLines, m.margin, y, headingLineHeight, '#1d1d1f');
+
+    if (point.body) {
+      y += m.bodyTopGap;
+      ctx.font = font(400, m.bodyPx);
+      const bodyLines = wrap(ctx, point.body, maxWidth);
+      const remaining = Math.floor((m.bottomY - y) / bodyLineHeight);
+      const visibleLines = bodyLines.slice(0, Math.max(0, remaining));
+      if (visibleLines.length < bodyLines.length && visibleLines.length > 0) {
+        visibleLines[visibleLines.length - 1] = '+ more in caption';
+      }
+      y += drawWrappedLines(ctx, visibleLines, m.margin, y, bodyLineHeight, '#2f2f31');
+    }
+    if (index < points.length - 1) y += m.pointGap;
+  });
+
+  return canvas.toDataURL('image/png');
+}
+
+export async function renderNotesSlideshow(show: Slideshow): Promise<string[]> {
+  if (!show.notesData) {
+    return Promise.all(show.slides.map((slide) => renderSlide(slide)));
+  }
+  return [await renderNotesHookSlide(show), await renderNotesValueSlide(show)];
+}
+
 export async function renderSlideshow(show: Slideshow): Promise<string[]> {
+  if (show.format === 'notes') return renderNotesSlideshow(show);
   const out: string[] = [];
   for (const slide of show.slides) {
     out.push(await renderSlide(slide));

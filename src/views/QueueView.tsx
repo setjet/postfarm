@@ -1,4 +1,5 @@
-import { Check, X, Sparkles, RefreshCw, Loader2, Pencil } from 'lucide-react';
+import { Check, X, Sparkles, RefreshCw, Loader2, Pencil, Wand2, ChevronDown } from 'lucide-react';
+import { useState } from 'react';
 import type { Slideshow } from '../types';
 import { ViewHeader } from '../components/ViewHeader';
 import { SlidePreview } from '../components/SlidePreview';
@@ -14,6 +15,7 @@ interface QueueViewProps {
   onApprove: (id: string) => void;
   onReject: (id: string) => void;
   onEdit: (id: string) => void;
+  onRewrite: (id: string, note?: string) => void;
   onToggleSelect: (id: string) => void;
   onSelectAll: () => void;
   onClearSelection: () => void;
@@ -29,6 +31,7 @@ export function QueueView({
   onApprove,
   onReject,
   onEdit,
+  onRewrite,
   onToggleSelect,
   onSelectAll,
   onClearSelection,
@@ -108,6 +111,10 @@ export function QueueView({
                 onApprove={() => onApprove(s.id)}
                 onReject={() => onReject(s.id)}
                 onEdit={() => onEdit(s.id)}
+                onRewrite={() => {
+                  const note = window.prompt('Optional rewrite note', s.qualityFeedback || 'Make this sharper and less generic.');
+                  if (note !== null) onRewrite(s.id, note);
+                }}
               />
             ))}
           </div>
@@ -124,9 +131,28 @@ interface CardProps {
   onApprove: () => void;
   onReject: () => void;
   onEdit: () => void;
+  onRewrite: () => void;
 }
 
-function SlideshowCard({ slideshow, selected, onToggleSelect, onApprove, onReject, onEdit }: CardProps) {
+function scoreLabel(slideshow: Slideshow) {
+  const score = slideshow.qualityScore;
+  const status = slideshow.qualityStatus || (score === undefined ? null : score >= 8.5 ? 'strong' : score >= 7 ? 'ready' : score >= 5.5 ? 'needs-review' : 'weak');
+  if (!status) return null;
+  const label = status === 'needs-review' ? 'Needs review' : status[0].toUpperCase() + status.slice(1);
+  const className =
+    status === 'strong'
+      ? 'border-success/40 bg-green-500/10 text-success'
+      : status === 'ready'
+      ? 'border-accent/40 bg-sky-500/10 text-accent'
+      : status === 'weak'
+      ? 'border-danger/40 bg-red-500/10 text-danger'
+      : 'border-warning/40 bg-amber-500/10 text-warning';
+  return { label, className, score };
+}
+
+function SlideshowCard({ slideshow, selected, onToggleSelect, onApprove, onReject, onEdit, onRewrite }: CardProps) {
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const quality = scoreLabel(slideshow);
   return (
     <div className={`self-start bg-surface border rounded-xl p-4 fade-up shadow-main transition-all hover:border-line-2 ${selected ? 'border-accent ring-1 ring-accent' : 'border-line'}`}>
       {/* Slide strip */}
@@ -135,8 +161,15 @@ function SlideshowCard({ slideshow, selected, onToggleSelect, onApprove, onRejec
           <input type="checkbox" checked={selected} onChange={onToggleSelect} className="cursor-pointer" />
         </label>
         <div className="grid grid-cols-[repeat(auto-fit,minmax(58px,1fr))] gap-1.5">
-          {slideshow.slides.map((slide) => (
-            <SlidePreview key={slide.id} slide={slide} className="rounded-md shadow-none" />
+          {slideshow.slides.map((slide, i) => (
+            <SlidePreview
+              key={slide.id}
+              slide={slide}
+              className="rounded-md shadow-none"
+              format={slideshow.format}
+              notesData={slideshow.notesData}
+              slideIndex={i}
+            />
           ))}
         </div>
       </div>
@@ -146,6 +179,11 @@ function SlideshowCard({ slideshow, selected, onToggleSelect, onApprove, onRejec
         <h3 className="text-[15px] font-semibold text-ink leading-snug mb-1.5">
           {slideshow.hook}
         </h3>
+        {slideshow.format === 'notes' && (
+          <span className="inline-flex mb-2 text-[10px] font-semibold px-1.5 py-0.5 rounded-md border border-accent/40 bg-sky-500/10 text-accent uppercase tracking-wide">
+            Notes carousel
+          </span>
+        )}
         <p className="text-[12px] text-ink-5 leading-relaxed line-clamp-2">
           {slideshow.caption}
         </p>
@@ -158,10 +196,36 @@ function SlideshowCard({ slideshow, selected, onToggleSelect, onApprove, onRejec
           ))}
         </div>
 
+        {quality && (
+          <div className="mt-3">
+            <button
+              type="button"
+              onClick={() => setFeedbackOpen((open) => !open)}
+              className={`inline-flex items-center gap-1.5 h-7 px-2 rounded-lg border text-[11px] font-medium ${quality.className}`}
+            >
+              {quality.score !== undefined ? `${quality.score}/10` : 'Score'} {quality.label}
+              <ChevronDown size={12} className={feedbackOpen ? 'rotate-180' : ''} />
+            </button>
+            {feedbackOpen && (
+              <div className="mt-2 rounded-lg border border-line bg-[#101010] p-3">
+                <p className="text-[12px] text-ink-4 leading-relaxed">
+                  {slideshow.qualityFeedback || 'No feedback stored for this post.'}
+                </p>
+                {slideshow.rewriteAttempts !== undefined && (
+                  <p className="text-[10px] text-ink-6 mt-2">Rewrite attempts: {slideshow.rewriteAttempts}</p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Actions */}
-        <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2 mt-4 pt-3 border-t border-line">
+        <div className="grid grid-cols-[auto_auto_1fr_auto] items-center gap-2 mt-4 pt-3 border-t border-line">
           <Button variant="secondary" icon={<Pencil size={13} />} onClick={onEdit}>
             Edit
+          </Button>
+          <Button variant="secondary" icon={<Wand2 size={13} />} onClick={onRewrite}>
+            Rewrite
           </Button>
           <Button
             variant="primary"

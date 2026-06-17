@@ -5,6 +5,7 @@ import { BulkScheduleModal } from './components/BulkScheduleModal';
 import { GenerateModal } from './components/GenerateModal';
 import { SlideshowEditorModal } from './components/SlideshowEditorModal';
 import { QueueView } from './views/QueueView';
+import { TrendsView } from './views/TrendsView';
 import { LibraryView } from './views/LibraryView';
 import { ScheduleView } from './views/ScheduleView';
 import { ResultsView } from './views/ResultsView';
@@ -12,7 +13,8 @@ import { BrainView } from './views/BrainView';
 import { SettingsView } from './views/SettingsView';
 import { renderSlideshow } from './lib/render';
 import * as api from './lib/api';
-import type { AppConfig, Project, Slideshow, Slide, SocialAccount, BrainState, ViewKey } from './types';
+import type { GenerateOptions } from './lib/api';
+import type { AppConfig, Project, Slideshow, Slide, SocialAccount, BrainState, ViewKey, NotesData } from './types';
 
 export default function App() {
   const [config, setConfig] = useState<AppConfig | null>(null);
@@ -56,11 +58,11 @@ export default function App() {
     })();
   }, [loadAccounts]);
 
-  const generate = async (count: number, packs: string[]) => {
+  const generate = async (count: number, options: GenerateOptions = {}) => {
     setError(null);
     setGenerating(true);
     try {
-      await api.generate(count, packs);
+      await api.generate(count, options);
       setQueue(await api.getQueue());
       setGenerateOpen(false);
     } catch (e) {
@@ -68,6 +70,19 @@ export default function App() {
     } finally {
       setGenerating(false);
     }
+  };
+
+  const generateFromTrends = async (trendIds?: string[]) => {
+    await generate(3, {
+      packs: activeProject?.imagePacks || [],
+      useTrends: !trendIds,
+      trendIds,
+      useLearning: true,
+      qualityMode: 'normal',
+      minScore: 7,
+      maxRewriteAttempts: 1,
+    });
+    setActiveView('queue');
   };
 
   const reject = async (id: string) => {
@@ -89,10 +104,26 @@ export default function App() {
     setActiveView('schedule');
   };
 
-  const saveEdits = async (patch: { slides: Slide[]; caption: string; hashtags: string[] }) => {
+  const saveEdits = async (patch: {
+    slides: Slide[];
+    caption: string;
+    hashtags: string[];
+    hook?: string;
+    notesData?: NotesData;
+    format?: Slideshow['format'];
+  }) => {
     if (!editing) return;
     setQueue(await api.updateSlideshow(editing.id, patch));
     setEditing(null);
+  };
+
+  const rewriteQueued = async (id: string, note?: string) => {
+    setError(null);
+    try {
+      setQueue(await api.rewriteSlideshow(id, note));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
   };
 
   const confirmSchedule = async (opts: {
@@ -227,10 +258,19 @@ export default function App() {
             onApprove={(id) => setScheduling(queue.find((s) => s.id === id) || null)}
             onReject={reject}
             onEdit={(id) => setEditing(queue.find((s) => s.id === id) || null)}
+            onRewrite={rewriteQueued}
             onToggleSelect={toggleSelect}
             onSelectAll={() => setSelectedIds(queue.map((s) => s.id))}
             onClearSelection={() => setSelectedIds([])}
             onBulkSchedule={() => setBulkOpen(true)}
+          />
+        )}
+        {activeView === 'trends' && (
+          <TrendsView
+            hasApify={hasApify}
+            canGenerate={hasOpenrouter}
+            generating={generating}
+            onGenerateFromTrends={generateFromTrends}
           />
         )}
         {activeView === 'library' && <LibraryView hasApify={hasApify} />}

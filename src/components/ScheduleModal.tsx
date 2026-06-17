@@ -161,8 +161,14 @@ export function ScheduleModal({ slideshow, accounts, defaults, onClose, onConfir
           {/* Preview */}
           <div>
             <div className="grid grid-cols-6 gap-1.5">
-              {slideshow.slides.map((s) => (
-                <SlidePreview key={s.id} slide={s} />
+              {slideshow.slides.map((s, i) => (
+                <SlidePreview
+                  key={s.id}
+                  slide={s}
+                  format={slideshow.format}
+                  notesData={slideshow.notesData}
+                  slideIndex={i}
+                />
               ))}
             </div>
             <p className="text-[12px] text-ink-4 mt-2 line-clamp-2">{slideshow.caption}</p>

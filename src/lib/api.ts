@@ -12,6 +12,8 @@ import type {
   LibraryImage,
   LibraryPack,
   VideoAsset,
+  TrendItem,
+  LearningMemory,
 } from '../types';
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -56,16 +58,46 @@ export const getModels = () => req<ModelOption[]>('/models');
 
 export const getQueue = () => req<Slideshow[]>('/queue');
 
-export const generate = (count = 4, packs?: string[]) =>
-  req<Slideshow[]>('/generate', { method: 'POST', body: JSON.stringify({ count, packs }) });
+export interface GenerateOptions {
+  postFormat?: 'standard' | 'notes';
+  packs?: string[];
+  useTrends?: boolean;
+  trendIds?: string[];
+  useLearning?: boolean;
+  qualityMode?: 'off' | 'normal' | 'strict';
+  minScore?: number;
+  maxRewriteAttempts?: number;
+  contentBucket?: string;
+  ctaKeyword?: string;
+}
+
+export const generate = (count = 4, options: GenerateOptions = {}) =>
+  req<Slideshow[]>('/generate', { method: 'POST', body: JSON.stringify({ count, ...options }) });
 
 export const removeFromQueue = (id: string) =>
   req<Slideshow[]>(`/queue/${id}`, { method: 'DELETE' });
 
 export const updateSlideshow = (
   id: string,
-  patch: Partial<Pick<Slideshow, 'slides' | 'caption' | 'hashtags' | 'hook'>>
+  patch: Partial<Pick<Slideshow, 'slides' | 'caption' | 'hashtags' | 'hook' | 'notesData' | 'format'>>
 ) => req<Slideshow[]>(`/queue/${id}`, { method: 'PUT', body: JSON.stringify(patch) });
+
+export const rewriteSlideshow = (id: string, note?: string) =>
+  req<Slideshow[]>(`/queue/${id}/rewrite`, { method: 'POST', body: JSON.stringify({ note }) });
+
+// Trend mining
+export const getTrends = () => req<TrendItem[]>('/trends');
+
+export const scrapeTrends = (queries: string[], count: number, actor?: string) =>
+  req<{ added: number; found: number; trends: TrendItem[] }>('/trends/scrape', {
+    method: 'POST',
+    body: JSON.stringify({ queries, count, actor }),
+  });
+
+export const deleteTrend = (id: string) =>
+  req<TrendItem[]>(`/trends/${encodeURIComponent(id)}`, { method: 'DELETE' });
+
+export const clearTrends = () => req<TrendItem[]>('/trends', { method: 'DELETE' });
 
 // ── Image library ─────────────────────────────────────────────────────────────
 export const getLibrary = () => req<LibraryImage[]>('/library');
@@ -177,3 +209,11 @@ export async function syncResults(): Promise<PostResult[]> {
   const raw = await req<Array<Record<string, unknown>>>('/results/sync', { method: 'POST' });
   return raw.map(mapResult);
 }
+
+export const getLearning = () => req<LearningMemory | null>('/learning');
+
+export const rebuildLearning = () =>
+  req<LearningMemory>('/learning/rebuild', { method: 'POST' });
+
+export const clearLearning = () =>
+  req<null>('/learning', { method: 'DELETE' });

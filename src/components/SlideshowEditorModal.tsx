@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { X, Loader2, ChevronLeft, ChevronRight, Trash2, Shuffle, Image as ImageIcon } from 'lucide-react';
-import type { Slideshow, Slide, LibraryImage } from '../types';
+import type { Slideshow, Slide, LibraryImage, NotesData } from '../types';
 import { Button } from './Button';
 import { SlidePreview } from './SlidePreview';
 import { getLibrary } from '../lib/api';
@@ -8,13 +8,28 @@ import { getLibrary } from '../lib/api';
 interface SlideshowEditorModalProps {
   slideshow: Slideshow;
   onClose: () => void;
-  onSave: (patch: { slides: Slide[]; caption: string; hashtags: string[] }) => Promise<void>;
+  onSave: (patch: { slides: Slide[]; caption: string; hashtags: string[]; hook?: string; notesData?: NotesData; format?: Slideshow['format'] }) => Promise<void>;
 }
 
 type Tab = 'post' | 'slide';
 
+function defaultNotesData(slideshow: Slideshow): NotesData {
+  return slideshow.notesData || {
+    hookText: slideshow.hook || slideshow.slides[0]?.text || '',
+    noteTitle: 'notes',
+    noteDate: 'today, 9:41 am',
+    points: [
+      { heading: 'start with the hook', body: 'make ppl curious before u explain anything.' },
+      { heading: 'keep it private', body: 'notes work bc they feel like something u found.' },
+      { heading: 'make it useful', body: 'give them one thing they can try today.' },
+    ],
+  };
+}
+
 export function SlideshowEditorModal({ slideshow, onClose, onSave }: SlideshowEditorModalProps) {
   const [slides, setSlides] = useState<Slide[]>(slideshow.slides.map((s) => ({ ...s })));
+  const isNotes = slideshow.format === 'notes';
+  const [notesData, setNotesData] = useState<NotesData>(() => defaultNotesData(slideshow));
   const [caption, setCaption] = useState(slideshow.caption);
   const [hashtags, setHashtags] = useState(slideshow.hashtags.join(' '));
   const [index, setIndex] = useState(0);
@@ -42,6 +57,27 @@ export function SlideshowEditorModal({ slideshow, onClose, onSave }: SlideshowEd
   const patchSlide = (patch: Partial<Slide>) =>
     setSlides((prev) => prev.map((s, i) => (i === index ? { ...s, ...patch } : s)));
 
+  const patchNotes = (patch: Partial<NotesData>) =>
+    setNotesData((prev) => ({ ...prev, ...patch }));
+
+  const patchPoint = (pointIndex: number, patch: Partial<NotesData['points'][number]>) =>
+    setNotesData((prev) => ({
+      ...prev,
+      points: prev.points.map((point, i) => (i === pointIndex ? { ...point, ...patch } : point)),
+    }));
+
+  const removePoint = (pointIndex: number) =>
+    setNotesData((prev) => ({
+      ...prev,
+      points: prev.points.length <= 1 ? prev.points : prev.points.filter((_, i) => i !== pointIndex),
+    }));
+
+  const addPoint = () =>
+    setNotesData((prev) => ({
+      ...prev,
+      points: [...prev.points, { heading: 'new point', body: 'short casual explanation.' }].slice(0, 5),
+    }));
+
   const shuffleBackgrounds = () => {
     const pool = filtered;
     if (!pool.length) return;
@@ -61,6 +97,9 @@ export function SlideshowEditorModal({ slideshow, onClose, onSave }: SlideshowEd
         slides,
         caption,
         hashtags: hashtags.split(/[\s,]+/).map((t) => t.replace(/^#/, '')).filter(Boolean),
+        hook: isNotes ? notesData.hookText : undefined,
+        notesData: isNotes ? notesData : undefined,
+        format: slideshow.format,
       });
     } finally {
       setSaving(false);
@@ -76,7 +115,12 @@ export function SlideshowEditorModal({ slideshow, onClose, onSave }: SlideshowEd
         {/* Preview */}
         <div className="sm:flex-1 bg-[#101010] flex flex-col items-center justify-center p-6 gap-3 min-w-0">
           <div className="w-[230px] max-w-full">
-            <SlidePreview slide={current} />
+            <SlidePreview
+              slide={current}
+              format={slideshow.format}
+              notesData={notesData}
+              slideIndex={index}
+            />
           </div>
           <div className="flex items-center gap-3">
             <button
@@ -154,23 +198,91 @@ export function SlideshowEditorModal({ slideshow, onClose, onSave }: SlideshowEd
               </>
             ) : (
               <>
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="text-[11px] text-ink-6 uppercase tracking-widest font-semibold">Slide {index + 1} text</label>
-                    {total > 1 && (
-                      <button onClick={deleteSlide} className="text-[10px] text-ink-6 hover:text-danger flex items-center gap-1">
-                        <Trash2 size={11} /> Delete slide
-                      </button>
-                    )}
+                {isNotes && index === 1 ? (
+                  <div className="space-y-4">
+                    <div>
+                      <label className="text-[11px] text-ink-6 uppercase tracking-widest font-semibold mb-1.5 block">Note title</label>
+                      <input
+                        value={notesData.noteTitle || ''}
+                        onChange={(e) => patchNotes({ noteTitle: e.target.value })}
+                        placeholder="notes"
+                        className="w-full h-10 bg-raised border border-line rounded-lg px-3 text-[13px] text-ink outline-none focus:border-line-2"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] text-ink-6 uppercase tracking-widest font-semibold mb-1.5 block">Note date</label>
+                      <input
+                        value={notesData.noteDate || ''}
+                        onChange={(e) => patchNotes({ noteDate: e.target.value })}
+                        placeholder="today, 9:41 am"
+                        className="w-full h-10 bg-raised border border-line rounded-lg px-3 text-[13px] text-ink outline-none focus:border-line-2"
+                      />
+                    </div>
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[11px] text-ink-6 uppercase tracking-widest font-semibold">Points</label>
+                        {notesData.points.length < 5 && (
+                          <button onClick={addPoint} className="text-[11px] text-accent hover:text-ink">
+                            Add point
+                          </button>
+                        )}
+                      </div>
+                      {notesData.points.map((point, pointIndex) => (
+                        <div key={pointIndex} className="rounded-lg border border-line bg-[#101010] p-3 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] text-ink-6 uppercase tracking-widest">Point {pointIndex + 1}</span>
+                            {notesData.points.length > 1 && (
+                              <button onClick={() => removePoint(pointIndex)} className="text-[10px] text-ink-6 hover:text-danger flex items-center gap-1">
+                                <Trash2 size={11} /> Remove
+                              </button>
+                            )}
+                          </div>
+                          <input
+                            value={point.heading}
+                            onChange={(e) => patchPoint(pointIndex, { heading: e.target.value })}
+                            placeholder="short heading"
+                            className="w-full h-9 bg-raised border border-line rounded-lg px-3 text-[13px] text-ink outline-none focus:border-line-2"
+                          />
+                          <textarea
+                            value={point.body}
+                            onChange={(e) => patchPoint(pointIndex, { body: e.target.value })}
+                            rows={2}
+                            placeholder="short casual explanation"
+                            className="w-full bg-raised border border-line rounded-lg px-3 py-2 text-[13px] text-ink resize-none outline-none focus:border-line-2"
+                          />
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                  <textarea
-                    value={current.text}
-                    onChange={(e) => patchSlide({ text: e.target.value })}
-                    rows={3}
-                    className="w-full bg-raised border border-line rounded-lg px-3 py-2 text-[13px] text-ink resize-none outline-none focus:border-line-2"
-                  />
-                </div>
+                ) : (
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-[11px] text-ink-6 uppercase tracking-widest font-semibold">
+                        {isNotes ? 'Hook text' : `Slide ${index + 1} text`}
+                      </label>
+                      {!isNotes && total > 1 && (
+                        <button onClick={deleteSlide} className="text-[10px] text-ink-6 hover:text-danger flex items-center gap-1">
+                          <Trash2 size={11} /> Delete slide
+                        </button>
+                      )}
+                    </div>
+                    <textarea
+                      value={isNotes ? notesData.hookText : current.text}
+                      onChange={(e) => {
+                        if (isNotes) {
+                          patchNotes({ hookText: e.target.value });
+                          patchSlide({ text: e.target.value });
+                        } else {
+                          patchSlide({ text: e.target.value });
+                        }
+                      }}
+                      rows={3}
+                      className="w-full bg-raised border border-line rounded-lg px-3 py-2 text-[13px] text-ink resize-none outline-none focus:border-line-2"
+                    />
+                  </div>
+                )}
 
+                {(!isNotes || index === 0) && (
                 <div>
                   <div className="grid grid-cols-[auto_1fr] items-center gap-3 mb-1.5">
                     <label className="text-[11px] text-ink-6 uppercase tracking-widest font-semibold">Background</label>
@@ -214,6 +326,7 @@ export function SlideshowEditorModal({ slideshow, onClose, onSave }: SlideshowEd
                     </div>
                   )}
                 </div>
+                )}
               </>
             )}
           </div>

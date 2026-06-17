@@ -20,11 +20,13 @@ import {
   CONFIG_DIR,
 } from './store.js'
 import { listAccounts, listPosts, listAnalytics, syncAnalytics, uploadMedia, createPost } from './postbridge.js'
-import { generateSlideshows } from './generate.js'
+import { generateSlideshows, improveSlideshow } from './generate.js'
 import { listModels, validateKey } from './openrouter.js'
 import { listLibrary, listPacks, scrapePinterest, removeScraped, getScrapedFile } from './library.js'
 import { listVideos, importVideoUrl, scrapeVideos, removeVideo, getVideoFile } from './videoLibrary.js'
 import { renderVideoPost } from './videoRender.js'
+import { listTrends, scrapeTrends, removeTrend, clearTrends, trendsForPrompt } from './trends.js'
+import { getLearningMemory, rebuildLearningMemory, clearLearningMemory } from './learning.js'
 import { logger } from './log.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -92,6 +94,21 @@ app.post('/api/config/test', h(async (_req, res) => {
 // Public model catalog for the Settings dropdown.
 app.get('/api/models', h(async (_req, res) => res.json(await listModels())))
 
+// Trend mining
+app.get('/api/trends', h(async (_req, res) => res.json(listTrends(getActiveProject().id))))
+
+app.post('/api/trends/scrape', h(async (req, res) => {
+  const { keys } = getConfig()
+  const { queries, count, actor } = req.body || {}
+  res.json(await scrapeTrends({ apiKey: keys.apify, projectId: getActiveProject().id, queries, count, actor }))
+}))
+
+app.delete('/api/trends/:id', h(async (req, res) =>
+  res.json(removeTrend(getActiveProject().id, req.params.id))
+))
+
+app.delete('/api/trends', h(async (_req, res) => res.json(clearTrends(getActiveProject().id))))
+
 // ── Queue (generated drafts for the active project, before post-bridge) ───────
 app.get('/api/queue', h(async (_req, res) => {
   const project = getActiveProject()
@@ -102,7 +119,25 @@ app.post('/api/generate', h(async (req, res) => {
   const { keys, model } = getConfig()
   const project = getActiveProject()
   const count = Math.min(Math.max(Math.round(Number(req.body?.count) || 4), 1), 100)
-  const slideshows = await generateSlideshows({ apiKey: keys.openrouter, model, brain: project.brain, count })
+  const trendIds = Array.isArray(req.body?.trendIds) ? req.body.trendIds : []
+  const trends = req.body?.useTrends || trendIds.length ? trendsForPrompt(project.id, trendIds) : []
+  const learning = req.body?.useLearning ? getLearningMemory(project.id) : null
+  const slideshows = await generateSlideshows({
+    apiKey: keys.openrouter,
+    model,
+    brain: project.brain,
+    count,
+    options: {
+      trends,
+      learning,
+      qualityMode: req.body?.qualityMode || 'off',
+      minScore: req.body?.minScore,
+      maxRewriteAttempts: req.body?.maxRewriteAttempts,
+      contentBucket: req.body?.contentBucket,
+      ctaKeyword: req.body?.ctaKeyword,
+      postFormat: req.body?.postFormat === 'notes' ? 'notes' : 'standard',
+    },
+  })
 
   // Auto-assign background images. A per-batch `packs` override (from the
   // Generate modal) wins; otherwise fall back to the project's saved packs.
@@ -113,7 +148,8 @@ app.post('/api/generate', h(async (req, res) => {
     genLog.step(`assigning backgrounds from ${packs.length} pack${packs.length === 1 ? '' : 's'} (${pool.length} images)`)
     for (const show of slideshows) {
       const used = new Set()
-      for (const slide of show.slides) {
+      const slidesToAssign = show.format === 'notes' ? show.slides.slice(0, 1) : show.slides
+      for (const slide of slidesToAssign) {
         // Prefer an unused image within this slideshow for visual variety.
         const fresh = pool.filter((i) => !used.has(i.url))
         const pick = (fresh.length ? fresh : pool)[Math.floor(Math.random() * (fresh.length || pool.length))]
@@ -135,7 +171,7 @@ app.delete('/api/queue/:id', h(async (req, res) =>
 app.put('/api/queue/:id', h(async (req, res) => {
   const pid = getActiveProject().id
   const patch = req.body || {}
-  const allowed = ['slides', 'caption', 'hashtags', 'hook']
+  const allowed = ['slides', 'caption', 'hashtags', 'hook', 'notesData', 'format']
   const next = getQueue(pid).map((s) => {
     if (s.id !== req.params.id) return s
     const merged = { ...s }
@@ -143,6 +179,25 @@ app.put('/api/queue/:id', h(async (req, res) => {
     return merged
   })
   res.json(setQueue(pid, next))
+}))
+
+app.post('/api/queue/:id/rewrite', h(async (req, res) => {
+  const { keys, model } = getConfig()
+  const project = getActiveProject()
+  const queue = getQueue(project.id)
+  const current = queue.find((s) => s.id === req.params.id)
+  if (!current) throw new Error('This slideshow is no longer in the queue.')
+  const improved = await improveSlideshow({
+    apiKey: keys.openrouter,
+    model,
+    brain: project.brain,
+    slideshow: current,
+    note: req.body?.note,
+    trends: trendsForPrompt(project.id, current.trendSourcesUsed || []),
+    learning: getLearningMemory(project.id),
+    threshold: req.body?.minScore || 7,
+  })
+  res.json(setQueue(project.id, queue.map((s) => (s.id === req.params.id ? improved : s))))
 }))
 
 // ── Image library (bundled aesthetic packs + Pinterest scrapes via Apify) ────────
@@ -211,6 +266,17 @@ app.post('/api/results/sync', h(async (_req, res) => {
   try { await syncAnalytics(keys.postbridge) } catch (e) { console.warn('[results] sync skipped:', e.message) }
   res.json(await listAnalytics(keys.postbridge))
 }))
+
+app.get('/api/learning', h(async (_req, res) => res.json(getLearningMemory(getActiveProject().id))))
+
+app.post('/api/learning/rebuild', h(async (_req, res) => {
+  const { keys, model } = getConfig()
+  const project = getActiveProject()
+  const analytics = await listAnalytics(keys.postbridge)
+  res.json(await rebuildLearningMemory({ apiKey: keys.openrouter, model, project, analytics }))
+}))
+
+app.delete('/api/learning', h(async (_req, res) => res.json(clearLearningMemory(getActiveProject().id))))
 
 // Schedule a slideshow: upload each rendered slide image to post-bridge, then
 // create the post. `slides` are data URLs (PNG) rendered in the browser.
