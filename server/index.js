@@ -23,6 +23,8 @@ import { listAccounts, listPosts, listAnalytics, syncAnalytics, uploadMedia, cre
 import { generateSlideshows } from './generate.js'
 import { listModels, validateKey } from './openrouter.js'
 import { listLibrary, listPacks, scrapePinterest, removeScraped, getScrapedFile } from './library.js'
+import { listVideos, importVideoUrl, scrapeVideos, removeVideo, getVideoFile } from './videoLibrary.js'
+import { renderVideoPost } from './videoRender.js'
 import { logger } from './log.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -163,6 +165,28 @@ app.get('/api/library/img/:id', h(async (req, res) => {
   res.sendFile(file, { dotfiles: 'allow' })
 }))
 
+// Video library (local background assets for single-MP4 posts)
+app.get('/api/videos', h(async (_req, res) => res.json(listVideos())))
+
+app.post('/api/videos/import', h(async (req, res) => {
+  const { url, pack } = req.body || {}
+  res.json(await importVideoUrl({ url, pack }))
+}))
+
+app.post('/api/videos/scrape', h(async (req, res) => {
+  const { keys } = getConfig()
+  const { source, count, actor } = req.body || {}
+  res.json(await scrapeVideos({ apiKey: keys.apify, actor, source, count }))
+}))
+
+app.delete('/api/videos/:id', h(async (req, res) => res.json(removeVideo(req.params.id))))
+
+app.get('/api/videos/:id', h(async (req, res) => {
+  const file = getVideoFile(req.params.id)
+  if (!file) return res.status(404).end()
+  res.sendFile(file, { dotfiles: 'allow', acceptRanges: true })
+}))
+
 // ── post-bridge ───────────────────────────────────────────────────────────────
 app.get('/api/accounts', h(async (_req, res) => {
   const { keys } = getConfig()
@@ -227,6 +251,46 @@ app.post('/api/schedule', h(async (req, res) => {
 
   if (id) removeFromQueue(getActiveProject().id, id)
   schedLog.ok(`Done — ${mode === 'schedule' ? 'scheduled' : 'saved as draft'}`)
+  res.json(post)
+}))
+
+// Schedule a queued slideshow as a single rendered MP4: background video +
+// timed text overlays, then upload through the same post-bridge flow.
+app.post('/api/schedule/video', h(async (req, res) => {
+  const { keys } = getConfig()
+  const { id, caption, socialAccounts, scheduledAt, mode, videoId, duration, textPosition, watermark } = req.body || {}
+  if (!keys.postbridge) throw new Error('Missing post-bridge API key. Add it in Settings.')
+  if (!socialAccounts?.length) throw new Error('Pick at least one social account.')
+  if (!videoId) throw new Error('Select a background video from the Video Library.')
+
+  const project = getActiveProject()
+  const slideshow = getQueue(project.id).find((s) => s.id === id)
+  if (!slideshow) throw new Error('This slideshow is no longer in the queue.')
+  const videoFile = getVideoFile(videoId)
+  if (!videoFile) throw new Error('Selected background video could not be found.')
+
+  const when = mode === 'schedule' ? (scheduledAt ? `scheduled for ${scheduledAt}` : 'scheduled') : 'draft'
+  schedLog.start(`Rendering video ${id || 'slideshow'} -> ${when} · ${socialAccounts.length} account${socialAccounts.length === 1 ? '' : 's'}`)
+
+  const rendered = await renderVideoPost({ slideshow, videoFile, duration, textPosition, watermark })
+  schedLog.step(`uploading rendered MP4 (${rendered.duration}s) to post-bridge...`)
+  const mediaId = await uploadMedia(keys.postbridge, {
+    buffer: rendered.buffer,
+    mimeType: 'video/mp4',
+    name: `${id || 'slideshow'}-video.mp4`,
+  })
+
+  schedLog.step('creating video post on post-bridge...')
+  const post = await createPost(keys.postbridge, {
+    caption,
+    mediaIds: [mediaId],
+    socialAccounts,
+    scheduledAt: mode === 'schedule' ? scheduledAt : null,
+    isDraft: mode !== 'schedule',
+  })
+
+  if (id) removeFromQueue(project.id, id)
+  schedLog.ok(`Done - video ${mode === 'schedule' ? 'scheduled' : 'saved as draft'}`)
   res.json(post)
 }))
 

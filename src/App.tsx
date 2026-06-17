@@ -96,21 +96,42 @@ export default function App() {
   };
 
   const confirmSchedule = async (opts: {
+    format: 'carousel' | 'video';
     socialAccounts: number[];
     mode: 'draft' | 'schedule';
     scheduledAt: string | null;
+    videoId?: string;
+    duration?: number;
+    textPosition?: 'center' | 'top';
+    watermark?: boolean;
   }) => {
     if (!scheduling) return;
     const scheduledId = scheduling.id;
-    const slides = await renderSlideshow(scheduling);
-    await api.schedule({
-      id: scheduledId,
-      caption: `${scheduling.caption}${scheduling.hashtags.length ? ' ' + scheduling.hashtags.map((t) => `#${t}`).join(' ') : ''}`,
-      slides,
-      socialAccounts: opts.socialAccounts,
-      scheduledAt: opts.scheduledAt,
-      mode: opts.mode,
-    });
+    const caption = `${scheduling.caption}${scheduling.hashtags.length ? ' ' + scheduling.hashtags.map((t) => `#${t}`).join(' ') : ''}`;
+    if (opts.format === 'video') {
+      if (!opts.videoId) throw new Error('Select a background video.');
+      await api.scheduleVideo({
+        id: scheduledId,
+        caption,
+        socialAccounts: opts.socialAccounts,
+        scheduledAt: opts.scheduledAt,
+        mode: opts.mode,
+        videoId: opts.videoId,
+        duration: opts.duration ?? 12,
+        textPosition: opts.textPosition ?? 'center',
+        watermark: opts.watermark ?? true,
+      });
+    } else {
+      const slides = await renderSlideshow(scheduling);
+      await api.schedule({
+        id: scheduledId,
+        caption,
+        slides,
+        socialAccounts: opts.socialAccounts,
+        scheduledAt: opts.scheduledAt,
+        mode: opts.mode,
+      });
+    }
     // Drop the now-scheduled slideshow from the queue immediately (optimistic),
     // then reconcile with the server. The modal stays open showing its success
     // state with a link to post-bridge instead of us jumping to the Schedule tab.

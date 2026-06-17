@@ -11,6 +11,7 @@ import type {
   ModelOption,
   LibraryImage,
   LibraryPack,
+  VideoAsset,
 } from '../types';
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -80,6 +81,24 @@ export const scrapePinterest = (searches: string[], count: number) =>
 export const deleteLibraryImage = (id: string) =>
   req<LibraryImage[]>(`/library/${encodeURIComponent(id)}`, { method: 'DELETE' });
 
+// Video library
+export const getVideos = () => req<VideoAsset[]>('/videos');
+
+export const importVideo = (url: string, pack?: string) =>
+  req<{ added: number; video: VideoAsset }>('/videos/import', {
+    method: 'POST',
+    body: JSON.stringify({ url, pack }),
+  });
+
+export const scrapeVideos = (source: string, count: number, actor?: string) =>
+  req<{ added: number; found: number }>('/videos/scrape', {
+    method: 'POST',
+    body: JSON.stringify({ source, count, actor }),
+  });
+
+export const deleteVideo = (id: string) =>
+  req<VideoAsset[]>(`/videos/${encodeURIComponent(id)}`, { method: 'DELETE' });
+
 export const getAccounts = () => req<SocialAccount[]>('/accounts');
 
 export interface SchedulePayload {
@@ -93,6 +112,21 @@ export interface SchedulePayload {
 
 export const schedule = (payload: SchedulePayload) =>
   req<unknown>('/schedule', { method: 'POST', body: JSON.stringify(payload) });
+
+export interface ScheduleVideoPayload {
+  id: string;
+  caption: string;
+  socialAccounts: number[];
+  scheduledAt: string | null;
+  mode: 'draft' | 'schedule';
+  videoId: string;
+  duration: number;
+  textPosition: 'center' | 'top';
+  watermark: boolean;
+}
+
+export const scheduleVideo = (payload: ScheduleVideoPayload) =>
+  req<unknown>('/schedule/video', { method: 'POST', body: JSON.stringify(payload) });
 
 // post-bridge → ScheduledPost. post-bridge stores caption + media + schedule;
 // it has no concept of our per-slide text, so the Schedule view shows the

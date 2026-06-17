@@ -29,6 +29,10 @@ function formatTime(iso: string | null) {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
 
+function isVideoUrl(url: string) {
+  return /\.(mp4|mov|m4v|webm)(\?|$)/i.test(url);
+}
+
 const statusMeta: Record<string, { icon: typeof Clock; className: string; label: string }> = {
   draft: { icon: FileEdit, className: 'text-ink-5', label: 'Draft' },
   scheduled: { icon: Clock, className: 'text-accent', label: 'Scheduled' },
@@ -136,9 +140,7 @@ function ScheduledRow({ post }: { post: ScheduledPost }) {
       </div>
       <div className="flex gap-1 shrink-0">
         {post.mediaUrls.slice(0, 4).map((url, i) => (
-          <div key={i} className="w-9 aspect-[9/16] rounded-md overflow-hidden bg-raised border border-line">
-            <img src={url} alt="" className="w-full h-full object-cover" />
-          </div>
+          <MediaThumb key={i} url={url} />
         ))}
       </div>
       <div className="flex-1 min-w-0">
@@ -160,6 +162,18 @@ function Empty({ text }: { text: string }) {
   return (
     <div className="text-center py-16 text-[13px] text-ink-5 max-w-md mx-auto leading-relaxed">
       {text}
+    </div>
+  );
+}
+
+function MediaThumb({ url }: { url: string }) {
+  return (
+    <div className="w-9 aspect-[9/16] rounded-md overflow-hidden bg-raised border border-line">
+      {isVideoUrl(url) ? (
+        <video src={url} muted playsInline preload="metadata" className="w-full h-full object-cover" />
+      ) : (
+        <img src={url} alt="" className="w-full h-full object-cover" />
+      )}
     </div>
   );
 }

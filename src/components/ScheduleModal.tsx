@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { X, Loader2, CalendarClock, Info, CheckCircle2, ExternalLink } from 'lucide-react';
-import type { Slideshow, SocialAccount } from '../types';
-import { getScheduledPosts } from '../lib/api';
+import { X, Loader2, CalendarClock, Info, CheckCircle2, ExternalLink, Film } from 'lucide-react';
+import type { Slideshow, SocialAccount, VideoAsset } from '../types';
+import { getScheduledPosts, getVideos } from '../lib/api';
 import { Button } from './Button';
 import { SlidePreview } from './SlidePreview';
 
@@ -24,15 +24,27 @@ interface ScheduleModalProps {
   defaults: { socialAccountIds: number[]; mode: 'draft' | 'schedule' };
   onClose: () => void;
   onConfirm: (opts: {
+    format: 'carousel' | 'video';
     socialAccounts: number[];
     mode: 'draft' | 'schedule';
     scheduledAt: string | null;
+    videoId?: string;
+    duration?: number;
+    textPosition?: 'center' | 'top';
+    watermark?: boolean;
   }) => Promise<void>;
 }
 
 export function ScheduleModal({ slideshow, accounts, defaults, onClose, onConfirm }: ScheduleModalProps) {
   const [selected, setSelected] = useState<number[]>(defaults.socialAccountIds);
   const [mode, setMode] = useState<'draft' | 'schedule'>(defaults.mode);
+  const [format, setFormat] = useState<'carousel' | 'video'>('carousel');
+  const [videos, setVideos] = useState<VideoAsset[] | null>(null);
+  const [videoId, setVideoId] = useState('');
+  const [duration, setDuration] = useState(12);
+  const [textPosition, setTextPosition] = useState<'center' | 'top'>('center');
+  const [watermark, setWatermark] = useState(true);
+  const [videoLoadError, setVideoLoadError] = useState<string | null>(null);
   // Seed with now + gap immediately so the field is never blank; refine to
   // "after the last scheduled post" once post-bridge responds.
   const [when, setWhen] = useState(() =>
@@ -55,6 +67,18 @@ export function ScheduleModal({ slideshow, accounts, defaults, onClose, onConfir
       .catch(() => {});
   }, []);
 
+  useEffect(() => {
+    getVideos()
+      .then((items) => {
+        setVideos(items);
+        setVideoId((current) => current || items[0]?.id || '');
+      })
+      .catch((e) => {
+        setVideos([]);
+        setVideoLoadError(e instanceof Error ? e.message : String(e));
+      });
+  }, []);
+
   const toggle = (id: number) =>
     setSelected((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
 
@@ -62,12 +86,20 @@ export function ScheduleModal({ slideshow, accounts, defaults, onClose, onConfir
     setError(null);
     if (!selected.length) return setError('Pick at least one account.');
     if (mode === 'schedule' && !when) return setError('Pick a date & time, or save as a draft.');
+    if (format === 'video' && !videoId) {
+      return setError(videoLoadError || 'Add or select a background video in Library first.');
+    }
     setBusy(true);
     try {
       await onConfirm({
+        format,
         socialAccounts: selected,
         mode,
         scheduledAt: mode === 'schedule' ? new Date(when).toISOString() : null,
+        videoId: format === 'video' ? videoId : undefined,
+        duration,
+        textPosition,
+        watermark,
       });
       setBusy(false);
       setDoneMode(mode); // show the success screen instead of closing
@@ -134,6 +166,95 @@ export function ScheduleModal({ slideshow, accounts, defaults, onClose, onConfir
               ))}
             </div>
             <p className="text-[12px] text-ink-4 mt-2 line-clamp-2">{slideshow.caption}</p>
+          </div>
+
+          {/* Format */}
+          <div>
+            <label className="text-[11px] text-ink-5 mb-1.5 block uppercase tracking-widest font-semibold">
+              Format
+            </label>
+            <div className="flex gap-2">
+              <Button variant={format === 'carousel' ? 'primary' : 'secondary'} onClick={() => setFormat('carousel')}>
+                Carousel
+              </Button>
+              <Button
+                variant={format === 'video' ? 'primary' : 'secondary'}
+                icon={<Film size={13} />}
+                onClick={() => setFormat('video')}
+              >
+                Video
+              </Button>
+            </div>
+
+            {format === 'video' && (
+              <div className="mt-3 rounded-lg border border-line bg-[#101010] p-3 space-y-3">
+                <div>
+                  <label className="text-[10px] text-ink-6 uppercase tracking-wider mb-1 block">
+                    Background video
+                  </label>
+                  {videos === null ? (
+                    <div className="flex items-center gap-2 text-[12px] text-ink-5">
+                      <Loader2 size={13} className="animate-spin text-accent" /> Loading videos...
+                    </div>
+                  ) : videos.length === 0 ? (
+                    <p className="text-[12px] text-ink-5">
+                      Add a background video in Library before scheduling as video.
+                    </p>
+                  ) : (
+                    <select
+                      value={videoId}
+                      onChange={(e) => setVideoId(e.target.value)}
+                      className="w-full h-10 bg-raised border border-line rounded-lg px-3 text-[13px] text-ink outline-none focus:border-line-2"
+                    >
+                      {videos.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.pack} - {v.source}{v.duration ? ` (${Math.round(v.duration)}s)` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[10px] text-ink-6 uppercase tracking-wider mb-1 block">
+                      Duration
+                    </label>
+                    <input
+                      type="number"
+                      min={8}
+                      max={15}
+                      value={duration}
+                      onChange={(e) => setDuration(Number(e.target.value))}
+                      onBlur={() => setDuration((d) => Math.min(Math.max(d || 8, 8), 15))}
+                      className="w-full h-10 bg-raised border border-line rounded-lg px-3 text-[13px] text-ink outline-none focus:border-line-2"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-ink-6 uppercase tracking-wider mb-1 block">
+                      Text
+                    </label>
+                    <select
+                      value={textPosition}
+                      onChange={(e) => setTextPosition(e.target.value === 'top' ? 'top' : 'center')}
+                      className="w-full h-10 bg-raised border border-line rounded-lg px-3 text-[13px] text-ink outline-none focus:border-line-2"
+                    >
+                      <option value="center">Centered</option>
+                      <option value="top">Top centered</option>
+                    </select>
+                  </div>
+                </div>
+
+                <label className="flex items-center gap-2 text-[12px] text-ink-4">
+                  <input
+                    type="checkbox"
+                    checked={watermark}
+                    onChange={(e) => setWatermark(e.target.checked)}
+                  />
+                  Zara Tech watermark
+                </label>
+              </div>
+            )}
           </div>
 
           {/* Accounts */}
@@ -221,7 +342,17 @@ export function ScheduleModal({ slideshow, accounts, defaults, onClose, onConfir
             onClick={confirm}
             disabled={busy}
           >
-            {busy ? 'Uploading…' : mode === 'schedule' ? 'Schedule it' : 'Save draft'}
+            {busy
+              ? format === 'video'
+                ? 'Rendering...'
+                : 'Uploading...'
+              : format === 'video'
+              ? mode === 'schedule'
+                ? 'Schedule video'
+                : 'Save video draft'
+              : mode === 'schedule'
+              ? 'Schedule it'
+              : 'Save draft'}
           </Button>
         </div>
       </div>

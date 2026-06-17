@@ -63,6 +63,16 @@ export interface LibraryPack {
   covers: string[];
 }
 
+export interface VideoAsset {
+  id: string;
+  url: string;
+  pack: string;
+  source: 'imported' | 'scraped';
+  addedAt: string;
+  duration: number | null;
+  originalUrl: string | null;
+}
+
 export interface ModelOption {
   id: string;
   name: string;
