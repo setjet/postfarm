@@ -4,6 +4,7 @@ import type { Slideshow, Slide, LibraryImage, NotesData } from '../types';
 import { Button } from './Button';
 import { SlidePreview } from './SlidePreview';
 import { getLibrary } from '../lib/api';
+import { normalizeHashtags } from '../lib/hashtags';
 
 interface SlideshowEditorModalProps {
   slideshow: Slideshow;
@@ -96,7 +97,7 @@ export function SlideshowEditorModal({ slideshow, onClose, onSave }: SlideshowEd
       await onSave({
         slides,
         caption,
-        hashtags: hashtags.split(/[\s,]+/).map((t) => t.replace(/^#/, '')).filter(Boolean),
+        hashtags: normalizeHashtags(hashtags),
         hook: isNotes ? notesData.hookText : undefined,
         notesData: isNotes ? notesData : undefined,
         format: slideshow.format,
@@ -109,14 +110,15 @@ export function SlideshowEditorModal({ slideshow, onClose, onSave }: SlideshowEd
   return (
     <div className="fixed inset-0 z-50 bg-black/55 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
       <div
-        className="bg-surface border border-line rounded-2xl w-full max-w-4xl max-h-[92vh] flex flex-col sm:flex-row overflow-hidden shadow-main fade-up"
+        className="bg-surface border border-line rounded-2xl w-[96vw] max-w-[1400px] h-[96vh] max-h-[96vh] flex flex-col sm:flex-row overflow-hidden shadow-main fade-up"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Preview */}
         <div className="sm:flex-1 bg-[#101010] flex flex-col items-center justify-center p-6 gap-3 min-w-0">
-          <div className="w-[230px] max-w-full">
+          <div className="h-[calc(96vh-8.5rem)] max-h-[860px] max-w-full aspect-[9/16]">
             <SlidePreview
               slide={current}
+              className="w-full h-full"
               format={slideshow.format}
               notesData={notesData}
               slideIndex={index}
@@ -190,10 +192,10 @@ export function SlideshowEditorModal({ slideshow, onClose, onSave }: SlideshowEd
                   <input
                     value={hashtags}
                     onChange={(e) => setHashtags(e.target.value)}
-                    placeholder="finance budgeting money"
+                    placeholder="#aitools #aiprompts #contentcreator"
                     className="w-full h-10 bg-raised border border-line rounded-lg px-3 text-[13px] text-ink outline-none focus:border-line-2"
                   />
-                  <span className="text-[10px] text-ink-6">Space or comma separated, no # needed.</span>
+                  <span className="text-[10px] text-ink-6">Space or comma separated. # is fine; tags are cleaned on save.</span>
                 </div>
               </>
             ) : (

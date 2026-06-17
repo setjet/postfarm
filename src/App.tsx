@@ -3,6 +3,7 @@ import { Sidebar } from './components/Sidebar';
 import { ScheduleModal } from './components/ScheduleModal';
 import { BulkScheduleModal } from './components/BulkScheduleModal';
 import { GenerateModal } from './components/GenerateModal';
+import { GenerationLoadingCard } from './components/GenerationLoadingCard';
 import { SlideshowEditorModal } from './components/SlideshowEditorModal';
 import { QueueView } from './views/QueueView';
 import { TrendsView } from './views/TrendsView';
@@ -12,6 +13,7 @@ import { ResultsView } from './views/ResultsView';
 import { BrainView } from './views/BrainView';
 import { SettingsView } from './views/SettingsView';
 import { renderSlideshow } from './lib/render';
+import { captionWithHashtags } from './lib/hashtags';
 import * as api from './lib/api';
 import type { GenerateOptions } from './lib/api';
 import type { AppConfig, Project, Slideshow, Slide, SocialAccount, BrainState, ViewKey, NotesData } from './types';
@@ -27,9 +29,11 @@ export default function App() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [generateOpen, setGenerateOpen] = useState(false);
+  const [generationRun, setGenerationRun] = useState<{ count: number; options: GenerateOptions } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const hasOpenrouter = !!config?.keys.openrouter;
+  const activeAiProvider = config?.aiProvider || 'openrouter';
+  const hasActiveAiKey = activeAiProvider === 'deepseek' ? !!config?.keys.deepseek : !!config?.keys.openrouter;
   const hasPostbridge = !!config?.keys.postbridge;
   const hasApify = !!config?.keys.apify;
   const activeProject: Project | undefined = config?.projects.find(
@@ -50,7 +54,8 @@ export default function App() {
         const cfg = await api.getConfig();
         setConfig(cfg);
         setQueue(await api.getQueue());
-        if (!cfg.keys.openrouter && !cfg.keys.postbridge) setActiveView('settings');
+        const hasAiKey = cfg.aiProvider === 'deepseek' ? !!cfg.keys.deepseek : !!cfg.keys.openrouter;
+        if (!hasAiKey && !cfg.keys.postbridge) setActiveView('settings');
         if (cfg.keys.postbridge) loadAccounts();
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Could not reach the Slidesmith server.');
@@ -60,7 +65,9 @@ export default function App() {
 
   const generate = async (count: number, options: GenerateOptions = {}) => {
     setError(null);
+    setGenerationRun({ count, options });
     setGenerating(true);
+    setGenerateOpen(false);
     try {
       await api.generate(count, options);
       setQueue(await api.getQueue());
@@ -69,6 +76,7 @@ export default function App() {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setGenerating(false);
+      setGenerationRun(null);
     }
   };
 
@@ -138,7 +146,7 @@ export default function App() {
   }) => {
     if (!scheduling) return;
     const scheduledId = scheduling.id;
-    const caption = `${scheduling.caption}${scheduling.hashtags.length ? ' ' + scheduling.hashtags.map((t) => `#${t}`).join(' ') : ''}`;
+    const caption = captionWithHashtags(scheduling.caption, scheduling.hashtags);
     if (opts.format === 'video') {
       if (!opts.videoId) throw new Error('Select a background video.');
       await api.scheduleVideo({
@@ -173,14 +181,22 @@ export default function App() {
   // Global settings (keys/model) + per-project edits (name/defaults), in one call.
   const saveSettings = async (patch: {
     keys?: AppConfig['keys'];
+    aiProvider?: AppConfig['aiProvider'];
     model?: string;
+    models?: AppConfig['models'];
     pinterestActor?: string;
     name?: string;
     defaults?: Project['defaults'];
     imagePacks?: string[];
   }) => {
-    if (patch.keys || patch.model !== undefined || patch.pinterestActor !== undefined) {
-      await api.saveConfig({ keys: patch.keys, model: patch.model, pinterestActor: patch.pinterestActor });
+    if (patch.keys || patch.model !== undefined || patch.models || patch.aiProvider !== undefined || patch.pinterestActor !== undefined) {
+      await api.saveConfig({
+        keys: patch.keys,
+        aiProvider: patch.aiProvider,
+        model: patch.model,
+        models: patch.models,
+        pinterestActor: patch.pinterestActor,
+      });
     }
     if (activeProject && (patch.name !== undefined || patch.defaults || patch.imagePacks)) {
       await api.updateProject(activeProject.id, {
@@ -252,7 +268,7 @@ export default function App() {
           <QueueView
             slideshows={queue}
             generating={generating}
-            canGenerate={hasOpenrouter}
+            canGenerate={hasActiveAiKey}
             onGenerate={() => setGenerateOpen(true)}
             selectedIds={selectedIds}
             onApprove={(id) => setScheduling(queue.find((s) => s.id === id) || null)}
@@ -268,7 +284,7 @@ export default function App() {
         {activeView === 'trends' && (
           <TrendsView
             hasApify={hasApify}
-            canGenerate={hasOpenrouter}
+            canGenerate={hasActiveAiKey}
             generating={generating}
             onGenerateFromTrends={generateFromTrends}
           />
@@ -328,9 +344,14 @@ export default function App() {
         <GenerateModal
           defaultPacks={activeProject.imagePacks}
           generating={generating}
+          error={error}
           onClose={() => setGenerateOpen(false)}
           onGenerate={generate}
         />
+      )}
+
+      {generating && generationRun && (
+        <GenerationLoadingCard count={generationRun.count} options={generationRun.options} />
       )}
     </div>
   );

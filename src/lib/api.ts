@@ -11,6 +11,7 @@ import type {
   ModelOption,
   LibraryImage,
   LibraryPack,
+  LibraryFolder,
   VideoAsset,
   TrendItem,
   LearningMemory,
@@ -30,7 +31,13 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 export const getConfig = () => req<AppConfig>('/config');
 
 // Global settings only (keys + model + scraper actor).
-export const saveConfig = (patch: { keys?: AppConfig['keys']; model?: string; pinterestActor?: string }) =>
+export const saveConfig = (patch: {
+  keys?: AppConfig['keys'];
+  aiProvider?: AppConfig['aiProvider'];
+  model?: string;
+  models?: AppConfig['models'];
+  pinterestActor?: string;
+}) =>
   req<AppConfig>('/config', { method: 'PUT', body: JSON.stringify(patch) });
 
 // Projects — each has its own Brain + default post-bridge accounts.
@@ -49,12 +56,13 @@ export const activateProject = (id: string) =>
   req<AppConfig>(`/projects/${id}/activate`, { method: 'POST' });
 
 export const testKeys = () =>
-  req<{ postbridge: boolean; openrouter: boolean; apify: boolean; errors: Record<string, string> }>(
+  req<{ postbridge: boolean; openrouter: boolean; deepseek: boolean; apify: boolean; errors: Record<string, string> }>(
     '/config/test',
     { method: 'POST' }
   );
 
 export const getModels = () => req<ModelOption[]>('/models');
+export const getDeepSeekModels = () => req<ModelOption[]>('/models/deepseek');
 
 export const getQueue = () => req<Slideshow[]>('/queue');
 
@@ -69,6 +77,9 @@ export interface GenerateOptions {
   maxRewriteAttempts?: number;
   contentBucket?: string;
   ctaKeyword?: string;
+  topicMode?: 'general' | 'custom';
+  topic?: string;
+  folderIds?: string[];
 }
 
 export const generate = (count = 4, options: GenerateOptions = {}) =>
@@ -103,11 +114,45 @@ export const clearTrends = () => req<TrendItem[]>('/trends', { method: 'DELETE' 
 export const getLibrary = () => req<LibraryImage[]>('/library');
 
 export const getPacks = () => req<LibraryPack[]>('/library/packs');
+export const getLibraryFolders = () => req<LibraryFolder[]>('/library/folders');
 
-export const scrapePinterest = (searches: string[], count: number) =>
+export const createLibraryFolder = (name: string, type: LibraryFolder['type'] = 'mixed') =>
+  req<LibraryFolder>('/library/folders', { method: 'POST', body: JSON.stringify({ name, type }) });
+
+export const updateLibraryFolder = (id: string, patch: Partial<Pick<LibraryFolder, 'name' | 'type'>>) =>
+  req<LibraryFolder>(`/library/folders/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(patch) });
+
+export const deleteLibraryFolder = (id: string) =>
+  req<LibraryFolder[]>(`/library/folders/${encodeURIComponent(id)}`, { method: 'DELETE' });
+
+export async function importImages(files: File[], folderId?: string) {
+  const images = await Promise.all(
+    files.map(
+      (file) =>
+        new Promise<{ name: string; type: string; data: string }>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve({ name: file.name, type: file.type, data: String(reader.result || '') });
+          reader.onerror = () => reject(new Error(`Could not read ${file.name}.`));
+          reader.readAsDataURL(file);
+        })
+    )
+  );
+  return req<{ added: number; images: LibraryImage[] }>('/library/import', {
+    method: 'POST',
+    body: JSON.stringify({ images, folderId }),
+  });
+}
+
+export const moveLibraryAsset = (id: string, folderId: string, type: 'image' | 'video' = 'image') =>
+  req<LibraryImage[] | VideoAsset[]>(`/library/assets/${encodeURIComponent(id)}/folder`, {
+    method: 'PUT',
+    body: JSON.stringify({ folderId, type }),
+  });
+
+export const scrapePinterest = (searches: string[], count: number, folderId?: string) =>
   req<{ added: number; found: number }>('/library/scrape', {
     method: 'POST',
-    body: JSON.stringify({ searches, count }),
+    body: JSON.stringify({ searches, count, folderId }),
   });
 
 export const deleteLibraryImage = (id: string) =>
@@ -116,16 +161,16 @@ export const deleteLibraryImage = (id: string) =>
 // Video library
 export const getVideos = () => req<VideoAsset[]>('/videos');
 
-export const importVideo = (url: string, pack?: string) =>
+export const importVideo = (url: string, pack?: string, folderId?: string) =>
   req<{ added: number; video: VideoAsset }>('/videos/import', {
     method: 'POST',
-    body: JSON.stringify({ url, pack }),
+    body: JSON.stringify({ url, pack, folderId }),
   });
 
-export const scrapeVideos = (source: string, count: number, actor?: string) =>
+export const scrapeVideos = (source: string, count: number, actor?: string, folderId?: string) =>
   req<{ added: number; found: number }>('/videos/scrape', {
     method: 'POST',
-    body: JSON.stringify({ source, count, actor }),
+    body: JSON.stringify({ source, count, actor, folderId }),
   });
 
 export const deleteVideo = (id: string) =>

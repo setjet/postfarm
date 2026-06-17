@@ -3,7 +3,7 @@
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
-import { chatJSON } from './openrouter.js'
+import { chatJSON } from './ai.js'
 
 const DEFAULT_DIR = process.env.VERCEL ? join(tmpdir(), '.slidesmith') : join(homedir(), '.slidesmith')
 const DIR = process.env.SLIDESMITH_DIR || DEFAULT_DIR
@@ -102,7 +102,7 @@ function fallbackMemory(project, analytics) {
   }
 }
 
-export async function rebuildLearningMemory({ apiKey, model, project, analytics }) {
+export async function rebuildLearningMemory({ provider = 'openrouter', apiKey, model, project, analytics }) {
   const compact = (analytics || []).map(compactPost).filter((p) => p.caption || p.views || p.likes)
   if (!compact.length) {
     return saveLearningMemory(project.id, fallbackMemory(project, []))
@@ -134,7 +134,7 @@ Return ONLY this JSON shape:
 }`
 
   try {
-    const parsed = await chatJSON({ apiKey, model, prompt })
+    const parsed = await chatJSON({ provider, apiKey, model, prompt })
     return saveLearningMemory(project.id, {
       projectId: project.id,
       generatedAt: new Date().toISOString(),

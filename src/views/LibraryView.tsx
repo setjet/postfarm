@@ -1,21 +1,47 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Loader2, Download, Trash2, X, ImageIcon, Video, Link2 } from 'lucide-react';
-import type { LibraryImage, VideoAsset } from '../types';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ArrowLeft,
+  Download,
+  Edit3,
+  Folder,
+  FolderPlus,
+  ImageIcon,
+  Link2,
+  Loader2,
+  Search,
+  Trash2,
+  Upload,
+  Video,
+  X,
+} from 'lucide-react';
+import type { LibraryFolder, LibraryImage, VideoAsset } from '../types';
 import { ViewHeader } from '../components/ViewHeader';
 import { Button } from '../components/Button';
 import {
-  getLibrary,
-  scrapePinterest,
+  createLibraryFolder,
+  deleteLibraryFolder,
   deleteLibraryImage,
-  getVideos,
-  importVideo as importVideoAsset,
-  scrapeVideos as scrapeVideoAssets,
   deleteVideo,
+  getLibrary,
+  getLibraryFolders,
+  getVideos,
+  importImages,
+  importVideo as importVideoAsset,
+  moveLibraryAsset,
+  scrapePinterest,
+  scrapeVideos as scrapeVideoAssets,
+  updateLibraryFolder,
 } from '../lib/api';
 
 interface LibraryViewProps {
   hasApify: boolean;
 }
+
+type MediaFilter = 'all' | 'images' | 'videos';
+
+const ALL_FOLDER_ID = 'all';
+const UNCATEGORIZED_FOLDER_ID = 'folder:uncategorized';
+const BUNDLED_FOLDER_ID = 'folder:bundled';
 
 function formatDuration(seconds: number | null) {
   if (!seconds) return null;
@@ -24,13 +50,30 @@ function formatDuration(seconds: number | null) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
+function folderName(folders: LibraryFolder[], id: string) {
+  if (id === ALL_FOLDER_ID) return 'All assets';
+  return folders.find((folder) => folder.id === id)?.name || 'Folder';
+}
+
+function assetText(image?: LibraryImage, video?: VideoAsset) {
+  if (image) return [image.pack, image.source, image.originalName].filter(Boolean).join(' ');
+  if (video) return [video.pack, video.source, video.originalUrl].filter(Boolean).join(' ');
+  return '';
+}
+
 export function LibraryView({ hasApify }: LibraryViewProps) {
-  const [tab, setTab] = useState<'images' | 'videos'>('images');
+  const [mediaFilter, setMediaFilter] = useState<MediaFilter>('all');
+  const [folders, setFolders] = useState<LibraryFolder[]>([]);
+  const [selectedFolderId, setSelectedFolderId] = useState(ALL_FOLDER_ID);
   const [images, setImages] = useState<LibraryImage[] | null>(null);
   const [videos, setVideos] = useState<VideoAsset[] | null>(null);
+  const [search, setSearch] = useState('');
   const [searches, setSearches] = useState('');
   const [count, setCount] = useState(40);
+  const [scrapeFolderId, setScrapeFolderId] = useState(UNCATEGORIZED_FOLDER_ID);
+  const [importFolderId, setImportFolderId] = useState(UNCATEGORIZED_FOLDER_ID);
   const [scraping, setScraping] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [preview, setPreview] = useState<LibraryImage | null>(null);
@@ -39,17 +82,62 @@ export function LibraryView({ hasApify }: LibraryViewProps) {
   const [videoPack, setVideoPack] = useState('');
   const [videoSource, setVideoSource] = useState('');
   const [videoCount, setVideoCount] = useState(5);
+  const [videoFolderId, setVideoFolderId] = useState('folder:videos');
   const [videoBusy, setVideoBusy] = useState<'import' | 'scrape' | null>(null);
   const [videoError, setVideoError] = useState<string | null>(null);
   const [videoNote, setVideoNote] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const loadImages = () => getLibrary().then(setImages).catch((e) => setError(e.message));
-  const loadVideos = () => getVideos().then(setVideos).catch((e) => setVideoError(e.message));
+  const loadImages = useCallback(() => getLibrary().then(setImages).catch((e) => setError(e.message)), []);
+  const loadVideos = useCallback(() => getVideos().then(setVideos).catch((e) => setVideoError(e.message)), []);
+  const loadFolders = useCallback(() => getLibraryFolders().then(setFolders).catch(() => setFolders([])), []);
+  const reloadAll = useCallback(async () => {
+    await Promise.all([loadImages(), loadVideos(), loadFolders()]);
+  }, [loadFolders, loadImages, loadVideos]);
 
   useEffect(() => {
-    void loadImages();
-    void loadVideos();
-  }, []);
+    void reloadAll();
+  }, [reloadAll]);
+
+  const imageFolders = folders.filter((folder) => folder.type !== 'video' && folder.id !== BUNDLED_FOLDER_ID);
+  const movableFolders = folders.filter((folder) => !folder.readonly);
+  const targetFolderOptions = folders.filter((folder) => folder.id !== BUNDLED_FOLDER_ID);
+
+  const folderSummaries = useMemo(() => {
+    const imageList = images || [];
+    const videoList = videos || [];
+    return folders.map((folder) => {
+      const folderImages = imageList.filter((image) => (image.folderId || UNCATEGORIZED_FOLDER_ID) === folder.id);
+      const folderVideos = videoList.filter((video) => (video.folderId || 'folder:videos') === folder.id);
+      return {
+        folder,
+        imageCount: folderImages.length,
+        videoCount: folderVideos.length,
+        previews: [
+          ...folderImages.slice(0, 4).map((image) => ({ type: 'image' as const, url: image.url })),
+          ...folderVideos.slice(0, Math.max(0, 4 - folderImages.length)).map((video) => ({ type: 'video' as const, url: video.url })),
+        ].slice(0, 4),
+      };
+    });
+  }, [folders, images, videos]);
+
+  const visibleImages = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    return (images || []).filter((image) => {
+      if (mediaFilter === 'videos') return false;
+      if (selectedFolderId !== ALL_FOLDER_ID && (image.folderId || UNCATEGORIZED_FOLDER_ID) !== selectedFolderId) return false;
+      return !needle || assetText(image).toLowerCase().includes(needle);
+    });
+  }, [images, mediaFilter, search, selectedFolderId]);
+
+  const visibleVideos = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    return (videos || []).filter((video) => {
+      if (mediaFilter === 'images') return false;
+      if (selectedFolderId !== ALL_FOLDER_ID && (video.folderId || 'folder:videos') !== selectedFolderId) return false;
+      return !needle || assetText(undefined, video).toLowerCase().includes(needle);
+    });
+  }, [videos, mediaFilter, search, selectedFolderId]);
 
   const scrape = async () => {
     setError(null);
@@ -57,13 +145,31 @@ export function LibraryView({ hasApify }: LibraryViewProps) {
     setScraping(true);
     try {
       const queries = searches.split(',').map((s) => s.trim()).filter(Boolean);
-      const r = await scrapePinterest(queries, count);
+      const r = await scrapePinterest(queries, count, scrapeFolderId);
       setNote(`Added ${r.added} image${r.added === 1 ? '' : 's'} from ${r.found} found.`);
-      await loadImages();
+      await reloadAll();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setScraping(false);
+    }
+  };
+
+  const importSelectedImages = async (files: FileList | null) => {
+    const selected = Array.from(files || []);
+    if (!selected.length) return;
+    setError(null);
+    setNote(null);
+    setImporting(true);
+    try {
+      const r = await importImages(selected, importFolderId);
+      setNote(`Added ${r.added} image${r.added === 1 ? '' : 's'}.`);
+      await reloadAll();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setImporting(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
@@ -72,11 +178,11 @@ export function LibraryView({ hasApify }: LibraryViewProps) {
     setVideoNote(null);
     setVideoBusy('import');
     try {
-      const r = await importVideoAsset(videoUrl.trim(), videoPack.trim() || undefined);
+      const r = await importVideoAsset(videoUrl.trim(), videoPack.trim() || undefined, videoFolderId);
       setVideoNote(`Added ${r.added} video.`);
       setVideoUrl('');
       setVideoPack('');
-      await loadVideos();
+      await reloadAll();
     } catch (e) {
       setVideoError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -89,9 +195,9 @@ export function LibraryView({ hasApify }: LibraryViewProps) {
     setVideoNote(null);
     setVideoBusy('scrape');
     try {
-      const r = await scrapeVideoAssets(videoSource.trim(), videoCount);
+      const r = await scrapeVideoAssets(videoSource.trim(), videoCount, undefined, videoFolderId);
       setVideoNote(`Added ${r.added} video${r.added === 1 ? '' : 's'} from ${r.found} found.`);
-      await loadVideos();
+      await reloadAll();
     } catch (e) {
       setVideoError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -99,298 +205,308 @@ export function LibraryView({ hasApify }: LibraryViewProps) {
     }
   };
 
-  const remove = async (id: string) => setImages(await deleteLibraryImage(id));
+  const createFolder = async () => {
+    const name = window.prompt('Folder name');
+    if (!name?.trim()) return;
+    await createLibraryFolder(name.trim(), mediaFilter === 'videos' ? 'video' : mediaFilter === 'images' ? 'image' : 'mixed');
+    await loadFolders();
+  };
+
+  const renameFolder = async (folder: LibraryFolder) => {
+    const name = window.prompt('Rename folder', folder.name);
+    if (!name?.trim()) return;
+    await updateLibraryFolder(folder.id, { name: name.trim(), type: folder.type });
+    await loadFolders();
+  };
+
+  const removeFolder = async (folder: LibraryFolder) => {
+    if (!window.confirm(`Delete "${folder.name}"? Assets will move to Uncategorized.`)) return;
+    await deleteLibraryFolder(folder.id);
+    setSelectedFolderId(ALL_FOLDER_ID);
+    await reloadAll();
+  };
+
+  const removeImage = async (id: string) => {
+    setImages(await deleteLibraryImage(id));
+    setPreview((current) => (current?.id === id ? null : current));
+  };
+
   const removeVideo = async (id: string) => {
     setVideos(await deleteVideo(id));
     setVideoPreview((current) => (current?.id === id ? null : current));
   };
 
-  const groups = useMemo(() => {
-    const map = new Map<string, LibraryImage[]>();
-    for (const img of images || []) {
-      if (!map.has(img.pack)) map.set(img.pack, []);
-      map.get(img.pack)!.push(img);
-    }
-    return [...map.entries()];
-  }, [images]);
+  const moveAsset = async (id: string, folderId: string, type: 'image' | 'video') => {
+    const next = await moveLibraryAsset(id, folderId, type);
+    if (type === 'video') setVideos(next as VideoAsset[]);
+    else setImages(next as LibraryImage[]);
+    await loadFolders();
+  };
 
-  const videoGroups = useMemo(() => {
-    const map = new Map<string, VideoAsset[]>();
-    for (const video of videos || []) {
-      if (!map.has(video.pack)) map.set(video.pack, []);
-      map.get(video.pack)!.push(video);
-    }
-    return [...map.entries()];
-  }, [videos]);
+  const loading = images === null || videos === null;
+  const selectedFolderName = folderName(folders, selectedFolderId);
 
   return (
     <>
       <ViewHeader
         title="Library"
-        subtitle="Background assets for your posts. Images power carousels; videos power single MP4 posts."
+        subtitle="Organize image and video backgrounds into clean folders without losing pack-based generation."
+        right={
+          <Button variant="secondary" icon={<FolderPlus size={13} />} onClick={createFolder}>
+            New folder
+          </Button>
+        }
       />
 
       <div className="flex-1 overflow-y-auto">
         <div className="px-4 sm:px-8 pt-4">
-          <div className="max-w-6xl mx-auto">
-            <div className="inline-flex items-center gap-1 rounded-xl border border-line bg-surface p-1 shadow-main">
-              <button
-                type="button"
-                onClick={() => setTab('images')}
-                className={`h-8 px-3 rounded-lg text-[12px] font-medium flex items-center gap-1.5 ${
-                  tab === 'images' ? 'bg-control text-ink' : 'text-ink-5 hover:text-ink hover:bg-white/[0.055]'
-                }`}
-              >
-                <ImageIcon size={13} /> Images
-              </button>
-              <button
-                type="button"
-                onClick={() => setTab('videos')}
-                className={`h-8 px-3 rounded-lg text-[12px] font-medium flex items-center gap-1.5 ${
-                  tab === 'videos' ? 'bg-control text-ink' : 'text-ink-5 hover:text-ink hover:bg-white/[0.055]'
-                }`}
-              >
-                <Video size={13} /> Videos
-              </button>
+          <div className="max-w-6xl mx-auto space-y-3">
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="inline-flex items-center gap-1 rounded-xl border border-line bg-surface p-1 shadow-main">
+                {(['all', 'images', 'videos'] as const).map((filter) => (
+                  <button
+                    key={filter}
+                    type="button"
+                    onClick={() => setMediaFilter(filter)}
+                    className={`h-8 px-3 rounded-lg text-[12px] font-medium flex items-center gap-1.5 ${
+                      mediaFilter === filter ? 'bg-control text-ink' : 'text-ink-5 hover:text-ink hover:bg-white/[0.055]'
+                    }`}
+                  >
+                    {filter === 'videos' ? <Video size={13} /> : filter === 'images' ? <ImageIcon size={13} /> : <Folder size={13} />}
+                    {filter[0].toUpperCase() + filter.slice(1)}
+                  </button>
+                ))}
+              </div>
+              <div className="relative flex-1 min-w-[220px]">
+                <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-6" />
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search assets"
+                  className="w-full h-10 bg-raised border border-line rounded-lg pl-8 pr-3 text-[12px] text-ink placeholder:text-ink-6 outline-none focus:border-line-2"
+                />
+              </div>
+            </div>
+
+            {selectedFolderId !== ALL_FOLDER_ID && (
+              <div className="flex items-center gap-2 text-[12px] text-ink-5">
+                <button onClick={() => setSelectedFolderId(ALL_FOLDER_ID)} className="inline-flex items-center gap-1 text-ink-4 hover:text-ink">
+                  <ArrowLeft size={13} /> Library
+                </button>
+                <span>/</span>
+                <span className="text-ink">{selectedFolderName}</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="px-4 sm:px-8 py-4">
+          <div className="max-w-6xl mx-auto grid grid-cols-1 xl:grid-cols-2 gap-3">
+            <div className="rounded-xl border border-line bg-surface p-4 shadow-main space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <h2 className="text-[12px] font-semibold text-ink-3 uppercase tracking-[0.12em]">Images</h2>
+                  <p className="text-[11px] text-ink-6 mt-0.5">Import your own, or scrape Pinterest.</p>
+                </div>
+                <select
+                  value={importFolderId}
+                  onChange={(e) => {
+                    setImportFolderId(e.target.value);
+                    setScrapeFolderId(e.target.value);
+                  }}
+                  className="h-9 max-w-[190px] bg-raised border border-line rounded-lg px-2 text-[12px] text-ink outline-none"
+                >
+                  {imageFolders.map((folder) => (
+                    <option key={folder.id} value={folder.id}>{folder.name}</option>
+                  ))}
+                </select>
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                multiple
+                className="hidden"
+                onChange={(e) => void importSelectedImages(e.target.files)}
+              />
+              <div className="flex items-start gap-2 flex-wrap">
+                <Button
+                  variant="primary"
+                  icon={importing ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={importing}
+                >
+                  {importing ? 'Importing...' : 'Import images'}
+                </Button>
+                <div className="flex-1 min-w-[220px]">
+                  <input
+                    value={searches}
+                    onChange={(e) => setSearches(e.target.value)}
+                    placeholder="Pinterest searches"
+                    disabled={!hasApify || scraping}
+                    className="w-full h-9 bg-raised border border-line rounded-lg px-3 text-[12px] text-ink placeholder:text-ink-6 outline-none focus:border-line-2 disabled:opacity-50"
+                  />
+                </div>
+                <input
+                  type="number"
+                  value={count}
+                  min={10}
+                  max={200}
+                  onChange={(e) => setCount(Number(e.target.value))}
+                  onBlur={() => setCount((c) => Math.min(Math.max(c || 10, 10), 200))}
+                  disabled={!hasApify || scraping}
+                  className="w-20 h-9 bg-raised border border-line rounded-lg px-2 text-[12px] text-ink outline-none focus:border-line-2 disabled:opacity-50"
+                />
+                <Button
+                  variant="secondary"
+                  icon={scraping ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+                  onClick={scrape}
+                  disabled={!hasApify || scraping || !searches.trim()}
+                >
+                  {scraping ? 'Scraping...' : 'Scrape'}
+                </Button>
+              </div>
+              {!hasApify && <p className="text-[11px] text-ink-6">Add your Apify key in Settings to scrape. Imports work without it.</p>}
+              {note && <p className="text-[12px] text-success">{note}</p>}
+              {error && <p className="text-[12px] text-danger">{error}</p>}
+            </div>
+
+            <div className="rounded-xl border border-line bg-surface p-4 shadow-main space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <h2 className="text-[12px] font-semibold text-ink-3 uppercase tracking-[0.12em]">Videos</h2>
+                  <p className="text-[11px] text-ink-6 mt-0.5">Import direct URLs or scrape TikTok backgrounds.</p>
+                </div>
+                <select
+                  value={videoFolderId}
+                  onChange={(e) => setVideoFolderId(e.target.value)}
+                  className="h-9 max-w-[190px] bg-raised border border-line rounded-lg px-2 text-[12px] text-ink outline-none"
+                >
+                  {targetFolderOptions.map((folder) => (
+                    <option key={folder.id} value={folder.id}>{folder.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-start gap-2 flex-wrap">
+                <input
+                  value={videoUrl}
+                  onChange={(e) => setVideoUrl(e.target.value)}
+                  placeholder="Direct MP4/WebM URL"
+                  className="flex-1 min-w-[220px] h-9 bg-raised border border-line rounded-lg px-3 text-[12px] text-ink placeholder:text-ink-6 outline-none focus:border-line-2"
+                />
+                <input
+                  value={videoPack}
+                  onChange={(e) => setVideoPack(e.target.value)}
+                  placeholder="Pack"
+                  className="w-28 h-9 bg-raised border border-line rounded-lg px-3 text-[12px] text-ink placeholder:text-ink-6 outline-none focus:border-line-2"
+                />
+                <Button
+                  variant="secondary"
+                  icon={videoBusy === 'import' ? <Loader2 size={13} className="animate-spin" /> : <Link2 size={13} />}
+                  onClick={importVideo}
+                  disabled={videoBusy !== null || !videoUrl.trim()}
+                >
+                  Import
+                </Button>
+              </div>
+              <div className="flex items-start gap-2 flex-wrap">
+                <input
+                  value={videoSource}
+                  onChange={(e) => setVideoSource(e.target.value)}
+                  placeholder="TikTok URL, @profile, #hashtag, or search"
+                  disabled={!hasApify || videoBusy !== null}
+                  className="flex-1 min-w-[220px] h-9 bg-raised border border-line rounded-lg px-3 text-[12px] text-ink placeholder:text-ink-6 outline-none focus:border-line-2 disabled:opacity-50"
+                />
+                <input
+                  type="number"
+                  value={videoCount}
+                  min={1}
+                  max={20}
+                  onChange={(e) => setVideoCount(Number(e.target.value))}
+                  onBlur={() => setVideoCount((c) => Math.min(Math.max(c || 1, 1), 20))}
+                  disabled={!hasApify || videoBusy !== null}
+                  className="w-20 h-9 bg-raised border border-line rounded-lg px-2 text-[12px] text-ink outline-none focus:border-line-2 disabled:opacity-50"
+                />
+                <Button
+                  variant="secondary"
+                  icon={videoBusy === 'scrape' ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+                  onClick={scrapeVideo}
+                  disabled={!hasApify || videoBusy !== null || !videoSource.trim()}
+                >
+                  Scrape
+                </Button>
+              </div>
+              {videoNote && <p className="text-[12px] text-success">{videoNote}</p>}
+              {videoError && <p className="text-[12px] text-danger">{videoError}</p>}
             </div>
           </div>
         </div>
 
-        {tab === 'images' ? (
-          <>
-            <div className="px-4 sm:px-8 py-4">
-              <div className="max-w-6xl mx-auto">
-                <div className="flex items-start gap-2 flex-wrap">
-                  <div className="flex-1 min-w-[220px]">
-                    <label className="text-[11px] text-ink-5 mb-1 block">Pinterest searches</label>
-                    <input
-                      value={searches}
-                      onChange={(e) => setSearches(e.target.value)}
-                      placeholder="e.g. dark moody aesthetic, cozy bedroom, foggy mountain"
-                      disabled={!hasApify}
-                      className="w-full h-10 bg-raised border border-line rounded-lg px-3 text-[13px] text-ink placeholder:text-ink-6 outline-none focus:border-line-2 disabled:opacity-50"
-                    />
-                  </div>
-                  <div className="w-24">
-                    <label className="text-[11px] text-ink-5 mb-1 block">Max</label>
-                    <input
-                      type="number"
-                      value={count}
-                      min={10}
-                      max={200}
-                      onChange={(e) => setCount(Number(e.target.value))}
-                      onBlur={() => setCount((c) => Math.min(Math.max(c || 10, 10), 200))}
-                      disabled={!hasApify}
-                      className="w-full h-10 bg-raised border border-line rounded-lg px-3 text-[13px] text-ink outline-none focus:border-line-2 disabled:opacity-50"
-                    />
-                    <span className="text-[10px] text-ink-6 mt-1 block">min 10</span>
-                  </div>
-                  <Button
-                    variant="primary"
-                    size="lg"
-                    className="mt-5"
-                    icon={scraping ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
-                    onClick={scrape}
-                    disabled={!hasApify || scraping || !searches.trim()}
-                  >
-                    {scraping ? 'Scraping...' : 'Scrape Pinterest'}
-                  </Button>
-                </div>
-                {!hasApify && (
-                  <p className="text-[12px] text-ink-5 mt-2">
-                    Add your Apify API key in Settings to scrape Pinterest. The bundled packs below work without it.
-                  </p>
-                )}
-                {note && <p className="text-[12px] text-success mt-2">{note}</p>}
-                {error && <p className="text-[12px] text-danger mt-2">{error}</p>}
+        <div className="p-4 sm:p-8 pt-0">
+          <div className="max-w-6xl mx-auto space-y-6">
+            {loading ? (
+              <div className="flex items-center justify-center py-16 text-ink-5 text-[13px] gap-2">
+                <Loader2 size={14} className="animate-spin text-accent" /> Loading library...
               </div>
-            </div>
-
-            <div className="p-4 sm:p-8">
-              <div className="max-w-6xl mx-auto space-y-8">
-                {images === null ? (
-                  <div className="flex items-center justify-center py-16 text-ink-5 text-[13px] gap-2">
-                    <Loader2 size={14} className="animate-spin text-accent" /> Loading library...
+            ) : (
+              <>
+                {selectedFolderId === ALL_FOLDER_ID && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                    {folderSummaries.map((summary) => (
+                      <FolderCard
+                        key={summary.folder.id}
+                        summary={summary}
+                        onOpen={() => setSelectedFolderId(summary.folder.id)}
+                        onRename={() => void renameFolder(summary.folder)}
+                        onDelete={() => void removeFolder(summary.folder)}
+                      />
+                    ))}
                   </div>
-                ) : (
-                  groups.map(([pack, imgs]) => (
-                    <div key={pack} className="fade-up">
-                      <div className="flex items-baseline gap-3 mb-3">
-                        <h2 className="text-[12px] font-semibold text-ink-3 uppercase tracking-[0.12em]">{pack}</h2>
-                        <span className="text-[11px] text-ink-6">{imgs.length} images</span>
-                      </div>
-                      <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-7 xl:grid-cols-9 gap-2">
-                        {imgs.map((img) => (
-                          <div
-                            key={img.id}
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => setPreview(img)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' || e.key === ' ') setPreview(img);
-                            }}
-                            className="group relative aspect-[9/16] cursor-zoom-in rounded-lg overflow-hidden bg-raised border border-line shadow-main transition-all hover:-translate-y-0.5 hover:border-line-2 focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                          >
-                            <img src={img.url} alt="" loading="lazy" className="w-full h-full object-cover" />
-                            {img.source === 'scraped' && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  remove(img.id);
-                                }}
-                                aria-label="Remove image"
-                                className="absolute top-1.5 right-1.5 w-7 h-7 rounded-lg bg-black/70 text-white border border-white/10 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                              >
-                                <Trash2 size={12} />
-                              </button>
-                            )}
-                          </div>
-                        ))}
-                      </div>
+                )}
+
+                <div>
+                  <div className="flex items-baseline gap-3 mb-3">
+                    <h2 className="text-[12px] font-semibold text-ink-3 uppercase tracking-[0.12em]">
+                      {selectedFolderId === ALL_FOLDER_ID ? 'All assets' : selectedFolderName}
+                    </h2>
+                    <span className="text-[11px] text-ink-6">
+                      {visibleImages.length} images · {visibleVideos.length} videos
+                    </span>
+                  </div>
+
+                  {!visibleImages.length && !visibleVideos.length ? (
+                    <div className="text-center py-16 text-[13px] text-ink-5">
+                      No assets here yet.
                     </div>
-                  ))
-                )}
-              </div>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="px-4 sm:px-8 py-4">
-              <div className="max-w-6xl mx-auto space-y-4">
-                <div className="flex items-start gap-2 flex-wrap">
-                  <div className="flex-1 min-w-[240px]">
-                    <label className="text-[11px] text-ink-5 mb-1 block">Direct video URL</label>
-                    <input
-                      value={videoUrl}
-                      onChange={(e) => setVideoUrl(e.target.value)}
-                      placeholder="https://.../background.mp4"
-                      className="w-full h-10 bg-raised border border-line rounded-lg px-3 text-[13px] text-ink placeholder:text-ink-6 outline-none focus:border-line-2"
-                    />
-                  </div>
-                  <div className="w-44">
-                    <label className="text-[11px] text-ink-5 mb-1 block">Pack</label>
-                    <input
-                      value={videoPack}
-                      onChange={(e) => setVideoPack(e.target.value)}
-                      placeholder="Imported"
-                      className="w-full h-10 bg-raised border border-line rounded-lg px-3 text-[13px] text-ink placeholder:text-ink-6 outline-none focus:border-line-2"
-                    />
-                  </div>
-                  <Button
-                    variant="primary"
-                    size="lg"
-                    className="mt-5"
-                    icon={videoBusy === 'import' ? <Loader2 size={13} className="animate-spin" /> : <Link2 size={13} />}
-                    onClick={importVideo}
-                    disabled={videoBusy !== null || !videoUrl.trim()}
-                  >
-                    {videoBusy === 'import' ? 'Importing...' : 'Import video'}
-                  </Button>
-                </div>
-
-                <div className="flex items-start gap-2 flex-wrap">
-                  <div className="flex-1 min-w-[240px]">
-                    <label className="text-[11px] text-ink-5 mb-1 block">TikTok source</label>
-                    <input
-                      value={videoSource}
-                      onChange={(e) => setVideoSource(e.target.value)}
-                      placeholder="TikTok URL, @profile, #hashtag, or search"
-                      disabled={!hasApify}
-                      className="w-full h-10 bg-raised border border-line rounded-lg px-3 text-[13px] text-ink placeholder:text-ink-6 outline-none focus:border-line-2 disabled:opacity-50"
-                    />
-                  </div>
-                  <div className="w-24">
-                    <label className="text-[11px] text-ink-5 mb-1 block">Max</label>
-                    <input
-                      type="number"
-                      value={videoCount}
-                      min={1}
-                      max={20}
-                      onChange={(e) => setVideoCount(Number(e.target.value))}
-                      onBlur={() => setVideoCount((c) => Math.min(Math.max(c || 1, 1), 20))}
-                      disabled={!hasApify}
-                      className="w-full h-10 bg-raised border border-line rounded-lg px-3 text-[13px] text-ink outline-none focus:border-line-2 disabled:opacity-50"
-                    />
-                    <span className="text-[10px] text-ink-6 mt-1 block">max 20</span>
-                  </div>
-                  <Button
-                    variant="primary"
-                    size="lg"
-                    className="mt-5"
-                    icon={videoBusy === 'scrape' ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
-                    onClick={scrapeVideo}
-                    disabled={!hasApify || videoBusy !== null || !videoSource.trim()}
-                  >
-                    {videoBusy === 'scrape' ? 'Scraping...' : 'Scrape videos'}
-                  </Button>
-                </div>
-
-                {!hasApify && (
-                  <p className="text-[12px] text-ink-5">
-                    Add your Apify API key in Settings to scrape video sources. Direct MP4/WebM imports work without it.
-                  </p>
-                )}
-                {videoNote && <p className="text-[12px] text-success">{videoNote}</p>}
-                {videoError && <p className="text-[12px] text-danger">{videoError}</p>}
-              </div>
-            </div>
-
-            <div className="p-4 sm:p-8">
-              <div className="max-w-6xl mx-auto space-y-8">
-                {videos === null ? (
-                  <div className="flex items-center justify-center py-16 text-ink-5 text-[13px] gap-2">
-                    <Loader2 size={14} className="animate-spin text-accent" /> Loading videos...
-                  </div>
-                ) : videos.length === 0 ? (
-                  <div className="text-center py-16 text-[13px] text-ink-5">
-                    No background videos yet. Import a direct video URL or scrape one with Apify.
-                  </div>
-                ) : (
-                  videoGroups.map(([pack, items]) => (
-                    <div key={pack} className="fade-up">
-                      <div className="flex items-baseline gap-3 mb-3">
-                        <h2 className="text-[12px] font-semibold text-ink-3 uppercase tracking-[0.12em]">{pack}</h2>
-                        <span className="text-[11px] text-ink-6">{items.length} videos</span>
-                      </div>
-                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-3">
-                        {items.map((video) => (
-                          <div
-                            key={video.id}
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => setVideoPreview(video)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' || e.key === ' ') setVideoPreview(video);
-                            }}
-                            className="group relative aspect-[9/16] cursor-zoom-in rounded-lg overflow-hidden bg-raised border border-line shadow-main transition-all hover:-translate-y-0.5 hover:border-line-2 focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                          >
-                            <video src={video.url} preload="metadata" muted playsInline className="w-full h-full object-cover" />
-                            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2">
-                              <div className="text-[11px] text-white font-medium truncate">{video.source}</div>
-                              {formatDuration(video.duration) && (
-                                <div className="text-[10px] text-white/70">{formatDuration(video.duration)}</div>
-                              )}
-                            </div>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                void removeVideo(video.id);
-                              }}
-                              aria-label="Remove video"
-                              className="absolute top-1.5 right-1.5 w-7 h-7 rounded-lg bg-black/70 text-white border border-white/10 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                            >
-                              <Trash2 size={12} />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
+                  ) : (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 xl:grid-cols-7 gap-3">
+                      {visibleImages.map((image) => (
+                        <ImageAssetCard
+                          key={image.id}
+                          image={image}
+                          folders={movableFolders}
+                          onPreview={() => setPreview(image)}
+                          onDelete={() => void removeImage(image.id)}
+                          onMove={(folderId) => void moveAsset(image.id, folderId, 'image')}
+                        />
+                      ))}
+                      {visibleVideos.map((video) => (
+                        <VideoAssetCard
+                          key={video.id}
+                          video={video}
+                          folders={movableFolders}
+                          onPreview={() => setVideoPreview(video)}
+                          onDelete={() => void removeVideo(video.id)}
+                          onMove={(folderId) => void moveAsset(video.id, folderId, 'video')}
+                        />
+                      ))}
                     </div>
-                  ))
-                )}
-              </div>
-            </div>
-          </>
-        )}
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
       </div>
 
       {preview && (
@@ -404,14 +520,7 @@ export function LibraryView({ hasApify }: LibraryViewProps) {
               alt=""
               className="max-h-[92vh] max-w-[92vw] rounded-xl border border-line bg-raised object-contain shadow-main"
             />
-            <button
-              type="button"
-              aria-label="Close preview"
-              onClick={() => setPreview(null)}
-              className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-black/70 text-white hover:bg-black"
-            >
-              <X size={16} />
-            </button>
+            <CloseButton onClick={() => setPreview(null)} />
           </div>
         </div>
       )}
@@ -429,17 +538,176 @@ export function LibraryView({ hasApify }: LibraryViewProps) {
               playsInline
               className="max-h-[92vh] max-w-[92vw] rounded-xl border border-line bg-black object-contain shadow-main"
             />
-            <button
-              type="button"
-              aria-label="Close preview"
-              onClick={() => setVideoPreview(null)}
-              className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-black/70 text-white hover:bg-black"
-            >
-              <X size={16} />
-            </button>
+            <CloseButton onClick={() => setVideoPreview(null)} />
           </div>
         </div>
       )}
     </>
+  );
+}
+
+function FolderCard({
+  summary,
+  onOpen,
+  onRename,
+  onDelete,
+}: {
+  summary: { folder: LibraryFolder; imageCount: number; videoCount: number; previews: { type: 'image' | 'video'; url: string }[] };
+  onOpen: () => void;
+  onRename: () => void;
+  onDelete: () => void;
+}) {
+  const { folder, imageCount, videoCount, previews } = summary;
+  const total = imageCount + videoCount;
+  return (
+    <div className="rounded-xl border border-line bg-surface p-3 shadow-main fade-up">
+      <button type="button" onClick={onOpen} className="w-full text-left">
+        <div className="aspect-[16/10] rounded-lg overflow-hidden bg-raised border border-line grid grid-cols-2 grid-rows-2">
+          {Array.from({ length: 4 }).map((_, i) => {
+            const preview = previews[i];
+            return (
+              <div key={i} className="overflow-hidden bg-control">
+                {preview?.type === 'image' && <img src={preview.url} alt="" loading="lazy" className="w-full h-full object-cover" />}
+                {preview?.type === 'video' && <video src={preview.url} preload="metadata" muted className="w-full h-full object-cover" />}
+              </div>
+            );
+          })}
+        </div>
+        <div className="mt-3 flex items-start gap-2">
+          <div className="w-8 h-8 rounded-lg border border-line bg-control text-accent flex items-center justify-center shrink-0">
+            <Folder size={14} />
+          </div>
+          <div className="min-w-0">
+            <h3 className="text-[13px] font-semibold text-ink truncate">{folder.name}</h3>
+            <p className="text-[11px] text-ink-6 mt-0.5">{total} asset{total === 1 ? '' : 's'} · {folder.type}</p>
+          </div>
+        </div>
+      </button>
+      {!folder.readonly && (
+        <div className="mt-3 flex gap-1.5">
+          <Button variant="ghost" size="sm" icon={<Edit3 size={11} />} onClick={onRename}>
+            Rename
+          </Button>
+          {folder.id !== UNCATEGORIZED_FOLDER_ID && (
+            <Button variant="danger-ghost" size="sm" icon={<Trash2 size={11} />} onClick={onDelete}>
+              Delete
+            </Button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ImageAssetCard({
+  image,
+  folders,
+  onPreview,
+  onDelete,
+  onMove,
+}: {
+  image: LibraryImage;
+  folders: LibraryFolder[];
+  onPreview: () => void;
+  onDelete: () => void;
+  onMove: (folderId: string) => void;
+}) {
+  const movable = image.source !== 'bundled';
+  return (
+    <div className="rounded-lg border border-line bg-surface p-1.5 shadow-main">
+      <button
+        type="button"
+        onClick={onPreview}
+        className="relative aspect-[9/16] w-full cursor-zoom-in overflow-hidden rounded-md bg-raised"
+      >
+        <img src={image.url} alt="" loading="lazy" className="w-full h-full object-cover" />
+      </button>
+      <div className="mt-1.5 flex items-center gap-1.5">
+        {movable ? (
+          <select
+            value={image.folderId || UNCATEGORIZED_FOLDER_ID}
+            onChange={(e) => onMove(e.target.value)}
+            className="min-w-0 flex-1 h-8 bg-raised border border-line rounded-md px-1.5 text-[10px] text-ink outline-none"
+          >
+            {folders.map((folder) => (
+              <option key={folder.id} value={folder.id}>{folder.name}</option>
+            ))}
+          </select>
+        ) : (
+          <span className="min-w-0 flex-1 truncate text-[10px] text-ink-6 px-1">Bundled</span>
+        )}
+        {movable && (
+          <button
+            type="button"
+            onClick={onDelete}
+            aria-label="Remove image"
+            className="w-8 h-8 rounded-md text-ink-5 hover:text-danger hover:bg-red-500/10 flex items-center justify-center"
+          >
+            <Trash2 size={12} />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function VideoAssetCard({
+  video,
+  folders,
+  onPreview,
+  onDelete,
+  onMove,
+}: {
+  video: VideoAsset;
+  folders: LibraryFolder[];
+  onPreview: () => void;
+  onDelete: () => void;
+  onMove: (folderId: string) => void;
+}) {
+  return (
+    <div className="rounded-lg border border-line bg-surface p-1.5 shadow-main">
+      <button
+        type="button"
+        onClick={onPreview}
+        className="relative aspect-[9/16] w-full cursor-zoom-in overflow-hidden rounded-md bg-raised"
+      >
+        <video src={video.url} preload="metadata" muted playsInline className="w-full h-full object-cover" />
+        <span className="absolute bottom-1.5 left-1.5 rounded bg-black/70 px-1.5 py-0.5 text-[10px] text-white">
+          {formatDuration(video.duration) || 'Video'}
+        </span>
+      </button>
+      <div className="mt-1.5 flex items-center gap-1.5">
+        <select
+          value={video.folderId || 'folder:videos'}
+          onChange={(e) => onMove(e.target.value)}
+          className="min-w-0 flex-1 h-8 bg-raised border border-line rounded-md px-1.5 text-[10px] text-ink outline-none"
+        >
+          {folders.map((folder) => (
+            <option key={folder.id} value={folder.id}>{folder.name}</option>
+          ))}
+        </select>
+        <button
+          type="button"
+          onClick={onDelete}
+          aria-label="Remove video"
+          className="w-8 h-8 rounded-md text-ink-5 hover:text-danger hover:bg-red-500/10 flex items-center justify-center"
+        >
+          <Trash2 size={12} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function CloseButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label="Close preview"
+      onClick={onClick}
+      className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-black/70 text-white hover:bg-black"
+    >
+      <X size={16} />
+    </button>
   );
 }

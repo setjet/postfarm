@@ -6,7 +6,9 @@ import { homedir, tmpdir } from 'node:os'
 import { join, dirname, extname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, rmSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { logger } from './log.js'
+import { BUNDLED_FOLDER_ID, UNCATEGORIZED_FOLDER_ID, safeFolderId } from './folders.js'
 
 const log = logger('scrape')
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -15,6 +17,13 @@ const DIR = process.env.SLIDESMITH_DIR || DEFAULT_DIR
 const MEDIA_DIR = join(DIR, 'library')
 const INDEX_PATH = join(DIR, 'library.json')
 const BUNDLED_MANIFEST = join(__dirname, '..', 'public', 'library', 'manifest.json')
+const MAX_IMPORT_BYTES = 16 * 1024 * 1024
+const IMPORT_TYPES = new Map([
+  ['image/jpeg', '.jpg'],
+  ['image/jpg', '.jpg'],
+  ['image/png', '.png'],
+  ['image/webp', '.webp'],
+])
 
 function ensure() {
   if (!existsSync(MEDIA_DIR)) mkdirSync(MEDIA_DIR, { recursive: true })
@@ -32,6 +41,7 @@ function bundled() {
       url: `/library/${path}`,
       pack: pack.name,
       source: 'bundled',
+      folderId: BUNDLED_FOLDER_ID,
     }))
   )
 }
@@ -56,7 +66,14 @@ function reconcileOrphans() {
   let changed = false
   for (const file of readdirSync(MEDIA_DIR)) {
     if (!/\.(jpe?g|png|webp)$/i.test(file) || known.has(file)) continue
-    index.push({ id: `scraped:${file.replace(/\.[^.]+$/, '')}`, file, pack: 'Scraped', addedAt: new Date().toISOString() })
+    index.push({
+      id: `scraped:${file.replace(/\.[^.]+$/, '')}`,
+      file,
+      pack: 'Scraped',
+      source: 'scraped',
+      folderId: UNCATEGORIZED_FOLDER_ID,
+      addedAt: new Date().toISOString(),
+    })
     changed = true
   }
   if (changed) writeJson(INDEX_PATH, index)
@@ -73,7 +90,10 @@ export function listLibrary() {
       id: s.id,
       url: `/api/library/img/${encodeURIComponent(s.id)}`,
       pack: s.pack || 'Scraped',
-      source: 'scraped',
+      source: s.source || 'scraped',
+      folderId: s.folderId || UNCATEGORIZED_FOLDER_ID,
+      addedAt: s.addedAt || null,
+      originalName: s.originalName || null,
     }))
   // Scraped first (newest), then the bundled packs.
   return [...scraped, ...bundled()]
@@ -111,9 +131,80 @@ export function removeScraped(id) {
   writeJson(INDEX_PATH, index.filter((s) => s.id !== id))
   return listLibrary()
 }
+
+export function moveImageToFolder(id, folderId) {
+  const index = scrapedIndex()
+  const rec = index.find((s) => s.id === id)
+  if (!rec) throw new Error('Only imported or scraped images can be moved.')
+  rec.folderId = safeFolderId(folderId)
+  writeJson(INDEX_PATH, index)
+  return listLibrary()
+}
+
+export function moveImagesFromFolder(folderId, nextFolderId = UNCATEGORIZED_FOLDER_ID) {
+  const index = scrapedIndex()
+  let changed = false
+  for (const rec of index) {
+    if ((rec.folderId || UNCATEGORIZED_FOLDER_ID) === folderId) {
+      rec.folderId = safeFolderId(nextFolderId)
+      changed = true
+    }
+  }
+  if (changed) writeJson(INDEX_PATH, index)
+}
+
 function writeJson(p, v) {
   ensure()
   writeFileSync(p, JSON.stringify(v, null, 2))
+}
+
+function extFromImport(file) {
+  const type = String(file.type || '').toLowerCase()
+  if (IMPORT_TYPES.has(type)) return IMPORT_TYPES.get(type)
+  const ext = extname(String(file.name || '')).toLowerCase()
+  if (['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) return ext === '.jpeg' ? '.jpg' : ext
+  return null
+}
+
+function importBuffer(file) {
+  const data = String(file.data || '')
+  const base64 = data.includes(',') ? data.split(',').pop() : data
+  if (!base64) throw new Error(`Missing file data for ${file.name || 'image'}.`)
+  return Buffer.from(base64, 'base64')
+}
+
+export function importImages({ images, folderId }) {
+  const files = Array.isArray(images) ? images : []
+  if (!files.length) throw new Error('Select at least one image to import.')
+  ensure()
+  const index = scrapedIndex()
+  const targetFolderId = safeFolderId(folderId)
+  const imported = []
+
+  for (const file of files) {
+    const ext = extFromImport(file)
+    if (!ext) throw new Error(`${file.name || 'Image'} is not a supported image type.`)
+    const buf = importBuffer(file)
+    if (buf.length < 32) throw new Error(`${file.name || 'Image'} is empty or invalid.`)
+    if (buf.length > MAX_IMPORT_BYTES) throw new Error(`${file.name || 'Image'} is too large. Keep imports under 16 MB each.`)
+    const id = `imported:${randomUUID()}`
+    const diskFile = `${id.replace('imported:', '')}${ext}`
+    writeFileSync(join(MEDIA_DIR, diskFile), buf)
+    const rec = {
+      id,
+      file: diskFile,
+      pack: 'Imported',
+      source: 'imported',
+      folderId: targetFolderId,
+      originalName: String(file.name || diskFile).slice(0, 180),
+      addedAt: new Date().toISOString(),
+    }
+    index.unshift(rec)
+    imported.push(rec)
+  }
+
+  writeJson(INDEX_PATH, index)
+  return { added: imported.length, images: listLibrary().filter((img) => imported.some((rec) => rec.id === img.id)) }
 }
 
 // Pull image URLs out of whatever the Pinterest actor returns. Pinterest actors
@@ -160,7 +251,7 @@ const IMG_FETCH_HEADERS = {
 
 const APIFY = 'https://api.apify.com/v2/acts'
 
-export async function scrapePinterest({ apiKey, actor, searches, count }) {
+export async function scrapePinterest({ apiKey, actor, searches, count, folderId }) {
   if (!apiKey) throw new Error('Missing Apify API key. Add it in Settings.')
   const queries = (searches || []).map((s) => s.trim()).filter(Boolean)
   if (!queries.length) throw new Error('Enter at least one Pinterest search.')
@@ -197,6 +288,7 @@ export async function scrapePinterest({ apiKey, actor, searches, count }) {
 
   ensure()
   const index = scrapedIndex()
+  const targetFolderId = safeFolderId(folderId)
   let added = 0
   let skipped = 0
   for (const url of urls) {
@@ -209,7 +301,7 @@ export async function scrapePinterest({ apiKey, actor, searches, count }) {
       const id = `scraped:${Date.now()}-${Math.round(Math.random() * 1e6)}`
       const file = `${id.replace('scraped:', '')}${ext}`
       writeFileSync(join(MEDIA_DIR, file), buf)
-      index.unshift({ id, file, pack, addedAt: new Date().toISOString() })
+      index.unshift({ id, file, pack, source: 'scraped', folderId: targetFolderId, addedAt: new Date().toISOString() })
       added++
       if (added % 5 === 0 || added === urls.length) log.progress(added, urls.length, 'downloaded')
     } catch {

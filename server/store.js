@@ -9,6 +9,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { bundledPackNames } from './library.js'
+import { DEFAULT_DEEPSEEK_MODEL } from './ai.js'
 
 const DEFAULT_DIR = process.env.VERCEL ? join(tmpdir(), '.slidesmith') : join(homedir(), '.slidesmith')
 const DIR = process.env.SLIDESMITH_DIR || DEFAULT_DIR
@@ -77,9 +78,16 @@ export function getConfig() {
     ? s.activeProjectId
     : projects[0].id
 
+  const openrouterModel = s.models?.openrouter || s.model || 'openai/gpt-4o-mini'
+  const deepseekModel = s.models?.deepseek || s.deepseekModel || DEFAULT_DEEPSEEK_MODEL
   const cfg = {
-    keys: { postbridge: '', openrouter: '', apify: '', ...s.keys },
-    model: s.model || 'openai/gpt-4o-mini',
+    keys: { postbridge: '', openrouter: '', apify: '', deepseek: '', ...s.keys },
+    aiProvider: s.aiProvider === 'deepseek' ? 'deepseek' : 'openrouter',
+    model: openrouterModel,
+    models: {
+      openrouter: openrouterModel,
+      deepseek: deepseekModel,
+    },
     pinterestActor: s.pinterestActor || 'fatihtahta/pinterest-scraper-search',
     projects,
     activeProjectId,
@@ -92,6 +100,9 @@ export function getConfig() {
     !Array.isArray(s.projects) ||
     s.projects.length !== projects.length ||
     s.activeProjectId !== activeProjectId ||
+    s.keys?.deepseek === undefined ||
+    !s.aiProvider ||
+    !s.models ||
     s.projects.some((p, i) => p.id !== projects[i].id)
   if (needsPersist) writeJson(CONFIG_PATH, cfg)
 
@@ -108,7 +119,13 @@ export function saveGlobal(patch) {
   const c = getConfig()
   return writeConfig({
     ...c,
-    model: patch.model ?? c.model,
+    aiProvider: patch.aiProvider ?? c.aiProvider,
+    model: patch.models?.openrouter ?? patch.model ?? c.model,
+    models: {
+      ...c.models,
+      ...(patch.models || {}),
+      ...(patch.model ? { openrouter: patch.model } : {}),
+    },
     pinterestActor: patch.pinterestActor ?? c.pinterestActor,
     keys: { ...c.keys, ...patch.keys },
   })

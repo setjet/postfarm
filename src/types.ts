@@ -29,6 +29,8 @@ export interface Slideshow {
   generationMode?: string;
   contentBucket?: string;
   ctaKeyword?: string;
+  topicMode?: 'general' | 'custom';
+  topic?: string;
 }
 
 export interface NotesData {
@@ -77,8 +79,13 @@ export interface Project {
 }
 
 export interface AppConfig {
-  keys: { postbridge: string; openrouter: string; apify: string };
+  keys: { postbridge: string; openrouter: string; apify: string; deepseek: string };
+  aiProvider: 'openrouter' | 'deepseek';
   model: string;
+  models: {
+    openrouter: string;
+    deepseek: string;
+  };
   pinterestActor: string;
   projects: Project[];
   activeProjectId: string;
@@ -88,14 +95,27 @@ export interface LibraryImage {
   id: string;
   url: string;
   pack: string;
-  source: 'bundled' | 'scraped';
+  source: 'bundled' | 'scraped' | 'imported';
+  folderId?: string;
+  addedAt?: string | null;
+  originalName?: string | null;
 }
 
 export interface LibraryPack {
   name: string;
-  source: 'bundled' | 'scraped';
+  source: 'bundled' | 'scraped' | 'imported';
   count: number;
   covers: string[];
+}
+
+export interface LibraryFolder {
+  id: string;
+  name: string;
+  type: 'mixed' | 'image' | 'video';
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  readonly?: boolean;
+  system?: boolean;
 }
 
 export interface TrendItem {
@@ -138,6 +158,7 @@ export interface VideoAsset {
   addedAt: string;
   duration: number | null;
   originalUrl: string | null;
+  folderId?: string;
 }
 
 export interface ModelOption {

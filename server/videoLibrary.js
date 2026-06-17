@@ -8,6 +8,7 @@ import { promisify } from 'node:util'
 import { randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, rmSync } from 'node:fs'
 import { logger } from './log.js'
+import { UNCATEGORIZED_FOLDER_ID, VIDEOS_FOLDER_ID, safeFolderId } from './folders.js'
 
 const execFileAsync = promisify(execFile)
 const log = logger('videos')
@@ -51,6 +52,7 @@ function publicRecord(rec) {
     addedAt: rec.addedAt,
     duration: rec.duration ?? null,
     originalUrl: rec.originalUrl || null,
+    folderId: rec.folderId || VIDEOS_FOLDER_ID,
   }
 }
 
@@ -70,6 +72,7 @@ function reconcileOrphans() {
       file,
       pack: 'Imported',
       source: 'imported',
+      folderId: VIDEOS_FOLDER_ID,
       addedAt: new Date().toISOString(),
       duration: null,
     })
@@ -101,6 +104,27 @@ export function removeVideo(id) {
   }
   writeJson(INDEX_PATH, index.filter((s) => s.id !== id))
   return listVideos()
+}
+
+export function moveVideoToFolder(id, folderId) {
+  const index = videoIndex()
+  const rec = index.find((s) => s.id === id)
+  if (!rec) throw new Error('Video not found.')
+  rec.folderId = safeFolderId(folderId, VIDEOS_FOLDER_ID)
+  writeJson(INDEX_PATH, index)
+  return listVideos()
+}
+
+export function moveVideosFromFolder(folderId, nextFolderId = UNCATEGORIZED_FOLDER_ID) {
+  const index = videoIndex()
+  let changed = false
+  for (const rec of index) {
+    if ((rec.folderId || VIDEOS_FOLDER_ID) === folderId) {
+      rec.folderId = safeFolderId(nextFolderId, UNCATEGORIZED_FOLDER_ID)
+      changed = true
+    }
+  }
+  if (changed) writeJson(INDEX_PATH, index)
 }
 
 function extensionFrom(contentType, url) {
@@ -142,7 +166,7 @@ async function probeDuration(file) {
   }
 }
 
-async function downloadVideo(url, { pack, source }) {
+async function downloadVideo(url, { pack, source, folderId }) {
   if (!/^https?:\/\//i.test(String(url || ''))) throw new Error('Enter a valid http(s) video URL.')
   const res = await fetch(url, {
     headers: VIDEO_FETCH_HEADERS,
@@ -172,6 +196,7 @@ async function downloadVideo(url, { pack, source }) {
     pack: pack || packFromUrl(url),
     source,
     originalUrl: url,
+    folderId: safeFolderId(folderId, VIDEOS_FOLDER_ID),
     addedAt: new Date().toISOString(),
     duration: await probeDuration(filePath),
   }
@@ -189,8 +214,8 @@ function packFromUrl(url) {
   }
 }
 
-export async function importVideoUrl({ url, pack }) {
-  const rec = await downloadVideo(String(url || '').trim(), { pack, source: 'imported' })
+export async function importVideoUrl({ url, pack, folderId }) {
+  const rec = await downloadVideo(String(url || '').trim(), { pack, source: 'imported', folderId })
   return { added: 1, video: rec }
 }
 
@@ -242,7 +267,7 @@ function scanVideoUrls(value, path = []) {
   return out
 }
 
-export async function scrapeVideos({ apiKey, actor, source, count }) {
+export async function scrapeVideos({ apiKey, actor, source, count, folderId }) {
   if (!apiKey) throw new Error('Missing Apify API key. Add it in Settings.')
   const query = String(source || '').trim()
   if (!query) throw new Error('Enter a TikTok URL, profile, hashtag, or search query.')
@@ -275,7 +300,7 @@ export async function scrapeVideos({ apiKey, actor, source, count }) {
   let skipped = 0
   for (const url of urls) {
     try {
-      await downloadVideo(url, { pack: query, source: 'scraped' })
+      await downloadVideo(url, { pack: query, source: 'scraped', folderId })
       added++
       log.progress(added, urls.length, 'downloaded')
     } catch {

@@ -5,6 +5,7 @@ import { ViewHeader } from '../components/ViewHeader';
 import { SlidePreview } from '../components/SlidePreview';
 import { Button } from '../components/Button';
 import { IconButton } from '../components/IconButton';
+import { normalizeHashtags } from '../lib/hashtags';
 
 interface QueueViewProps {
   slideshows: Slideshow[];
@@ -153,6 +154,7 @@ function scoreLabel(slideshow: Slideshow) {
 function SlideshowCard({ slideshow, selected, onToggleSelect, onApprove, onReject, onEdit, onRewrite }: CardProps) {
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const quality = scoreLabel(slideshow);
+  const displayHashtags = normalizeHashtags(slideshow.hashtags);
   return (
     <div className={`self-start bg-surface border rounded-xl p-4 fade-up shadow-main transition-all hover:border-line-2 ${selected ? 'border-accent ring-1 ring-accent' : 'border-line'}`}>
       {/* Slide strip */}
@@ -189,7 +191,7 @@ function SlideshowCard({ slideshow, selected, onToggleSelect, onApprove, onRejec
         </p>
 
         <div className="flex flex-wrap gap-1 mt-2">
-          {slideshow.hashtags.map((tag) => (
+          {displayHashtags.map((tag) => (
             <span key={tag} className="text-[10px] text-ink-5 px-1.5 py-0.5 rounded-md bg-control border border-line">
               #{tag}
             </span>

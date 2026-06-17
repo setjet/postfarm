@@ -1,7 +1,8 @@
 // Slideshow generation. Given the Brain plus optional trend research and
 // learning memory, the chosen model writes carousel slideshows. Quality mode is
 // optional; when off, generation stays close to the original simple flow.
-import { chatJSON } from './openrouter.js'
+import { chatJSON } from './ai.js'
+import { normalizeHashtags, trendHashtagSignals } from './hashtags.js'
 import { logger } from './log.js'
 
 const log = logger('generate')
@@ -48,6 +49,39 @@ function compactTrends(trends = []) {
   }))
 }
 
+function hashtagGuidance(brain, options = {}) {
+  const signals = trendHashtagSignals(options.trends || [], {
+    brain,
+    topic: [options.topic, options.contentBucket, options.ctaKeyword].filter(Boolean).join(' '),
+  })
+  const signalBlock = signals.length
+    ? `Trend-informed hashtag signals (use as research, not as forced tags):
+${JSON.stringify(signals, null, 2)}`
+    : 'No stored trend hashtag signals are available. Generate niche-specific tags from the account context and post topic.'
+
+  return `Hashtag rules:
+- Return hashtags as an array of 5-8 clean strings.
+- Do not include # in JSON.
+- Use lowercase.
+- No spaces inside a hashtag.
+- Avoid duplicates, filler, spammy tags, or unrelated viral tags.
+- Always include "fyp" once.
+- Include one brand hashtag when appropriate.
+- Prefer tags that match the niche, the specific post topic, tools/models mentioned, and relevant trend signals.
+${signalBlock}`
+}
+
+function topicGuidance(options = {}) {
+  const topic = String(options.topic || '').trim()
+  if (options.topicMode === 'custom' && topic) {
+    return `Topic focus:
+Generate content specifically about: ${topic}.
+Stay inside this topic. Do not drift into unrelated AI content. Hooks, slides, captions, hashtags, and rationale should all fit this topic.`
+  }
+  return `Topic focus:
+General mode. Generate the best-performing content based on the project Brain, style memory, trend data, learning memory, and content buckets.`
+}
+
 function learningForPrompt(memory) {
   if (!memory) return ''
   return `Analytics learning memory:
@@ -74,6 +108,8 @@ ${JSON.stringify(trends, null, 2)}`
   const learningBlock = options.learning ? learningForPrompt(options.learning) : ''
   const bucket = options.contentBucket ? `Preferred content bucket: ${options.contentBucket}` : ''
   const cta = options.ctaKeyword ? `CTA keyword preference: ${options.ctaKeyword}` : ''
+  const hashtagBlock = hashtagGuidance(brain, options)
+  const topicBlock = topicGuidance(options)
 
   return `You write short-form social media carousel slideshows (TikTok/Instagram).
 
@@ -92,6 +128,10 @@ ${learningBlock}
 ${bucket}
 ${cta}
 
+${topicBlock}
+
+${hashtagBlock}
+
 Write ${count} distinct slideshows. Respond with a JSON object of this exact shape:
 {
   "slideshows": [
@@ -99,7 +139,7 @@ Write ${count} distinct slideshows. Respond with a JSON object of this exact sha
       "hook": "the first slide - a scroll-stopping line, max ~8 words",
       "slides": ["the hook again as slide 1", "slide 2", "...5-6 lines total, each max ~8 words, last is a CTA like 'Save this'"],
       "caption": "the post caption with 1-2 emoji",
-      "hashtags": ["three", "relevant", "hashtags"],
+      "hashtags": ["aiprompts", "aiimages", "promptengineering", "facelesscontent", "fyp"],
       "rationale": "one sentence on why this should perform, tied to the style memory/research"
     }
   ]
@@ -117,6 +157,8 @@ ${JSON.stringify(trends, null, 2)}`
   const learningBlock = options.learning ? learningForPrompt(options.learning) : ''
   const bucket = options.contentBucket ? `Preferred content bucket: ${options.contentBucket}` : ''
   const cta = options.ctaKeyword ? `CTA keyword preference: ${options.ctaKeyword}` : ''
+  const hashtagBlock = hashtagGuidance(brain, options)
+  const topicBlock = topicGuidance(options)
 
   return `You create original TikTok/Instagram "lifestyle hook + iPhone Notes screenshot" carousel posts.
 
@@ -134,6 +176,10 @@ ${learningBlock}
 
 ${bucket}
 ${cta}
+
+${topicBlock}
+
+${hashtagBlock}
 
 Create ${count} distinct notes-style viral carousel concepts. Each concept is exactly 2 slides:
 1. A curiosity hook over a lifestyle image. It should make the viewer swipe and not reveal all the value.
@@ -171,18 +217,11 @@ Return ONLY this JSON shape:
         ]
       },
       "caption": "caption",
-      "hashtags": ["tag1", "tag2", "tag3"],
+      "hashtags": ["aitools", "aiprompts", "contentcreator", "facelesscontent", "fyp"],
       "rationale": "why this should perform"
     }
   ]
 }`
-}
-
-function normalizeHashtags(tags) {
-  return (Array.isArray(tags) ? tags : String(tags || '').split(/[,\s]+/))
-    .map((tag) => String(tag).replace(/^#/, '').trim())
-    .filter(Boolean)
-    .slice(0, 8)
 }
 
 function normalizeNotesData(raw, hook) {
@@ -208,7 +247,7 @@ function normalizeNotesData(raw, hook) {
   }
 }
 
-function normalizeRawSlideshow(raw, i, stamp, options = {}) {
+function normalizeRawSlideshow(raw, i, stamp, brain, options = {}) {
   const [from, to] = PALETTE[i % PALETTE.length]
   const format = raw.format === 'notes' || options.postFormat === 'notes' ? 'notes' : 'standard'
   const notesData = format === 'notes' ? normalizeNotesData(raw, raw.hook) : undefined
@@ -221,12 +260,14 @@ function normalizeRawSlideshow(raw, i, stamp, options = {}) {
     hook: raw.hook || slides[0] || '',
     notesData,
     caption: raw.caption || '',
-    hashtags: normalizeHashtags(raw.hashtags),
+    hashtags: normalizeHashtags(raw.hashtags, { brain }),
     rationale: raw.rationale || '',
     createdAt: options.createdAt || new Date(stamp).toISOString(),
     generationMode: options.generationMode,
     contentBucket: options.contentBucket || undefined,
     ctaKeyword: options.ctaKeyword || undefined,
+    topicMode: options.topicMode || undefined,
+    topic: options.topic || undefined,
     trendSourcesUsed: options.trendSourcesUsed || undefined,
     slides: slides.map((text, j) => ({
       id: options.slideIds?.[j] || `slide-${stamp}-${i}-${j}`,
@@ -238,7 +279,7 @@ function normalizeRawSlideshow(raw, i, stamp, options = {}) {
   }
 }
 
-function mergeRewrite(existing, raw) {
+function mergeRewrite(existing, raw, brain) {
   if (existing.format === 'notes') {
     const notesData = normalizeNotesData(raw, raw.hook || existing.hook)
     return {
@@ -247,7 +288,7 @@ function mergeRewrite(existing, raw) {
       hook: raw.hook || notesData.hookText || existing.hook,
       notesData,
       caption: raw.caption || existing.caption,
-      hashtags: normalizeHashtags(raw.hashtags || existing.hashtags),
+      hashtags: normalizeHashtags(raw.hashtags || existing.hashtags, { brain }),
       rationale: raw.rationale || existing.rationale,
       slides: [
         {
@@ -270,7 +311,7 @@ function mergeRewrite(existing, raw) {
     ...existing,
     hook: raw.hook || slides[0] || existing.hook,
     caption: raw.caption || existing.caption,
-    hashtags: normalizeHashtags(raw.hashtags || existing.hashtags),
+    hashtags: normalizeHashtags(raw.hashtags || existing.hashtags, { brain }),
     rationale: raw.rationale || existing.rationale,
     slides: slides.map((text, i) => ({
       ...(existing.slides[i] || {}),
@@ -291,6 +332,8 @@ function slideshowForPrompt(slideshow) {
     caption: slideshow.caption,
     hashtags: slideshow.hashtags,
     rationale: slideshow.rationale,
+    topicMode: slideshow.topicMode,
+    topic: slideshow.topic,
   }
 }
 
@@ -325,7 +368,7 @@ function fallbackScore(error, threshold) {
   }
 }
 
-async function scoreSlideshow({ apiKey, model, brain, slideshow, threshold }) {
+async function scoreSlideshow({ provider, apiKey, model, brain, slideshow, threshold }) {
   const prompt = `Score this short-form carousel for ${brain.appName || 'this brand'}.
 
 Audience: ${brain.audience || '(unspecified)'}
@@ -362,14 +405,16 @@ Return ONLY JSON:
   "qualityFeedback": "specific rewrite advice"
 }`
   try {
-    return parseScore(await chatJSON({ apiKey, model, prompt }), threshold)
+    return parseScore(await chatJSON({ provider, apiKey, model, prompt }), threshold)
   } catch (e) {
     log.warn(`quality scoring failed: ${e.message || String(e)}`)
     return fallbackScore(e, threshold)
   }
 }
 
-async function rewriteSlideshow({ apiKey, model, brain, slideshow, feedback, note, trends, learning }) {
+async function rewriteSlideshow({ provider, apiKey, model, brain, slideshow, feedback, note, trends, learning }) {
+  const hashtagBlock = hashtagGuidance(brain, { trends, topic: slideshow.topic, topicMode: slideshow.topicMode })
+  const topicBlock = topicGuidance({ topic: slideshow.topic, topicMode: slideshow.topicMode })
   if (slideshow.format === 'notes') {
     const prompt = `Rewrite this notes-style viral carousel while keeping it exactly 2 slides:
 1. lifestyle/photo curiosity hook
@@ -383,8 +428,12 @@ Account:
 Rewrite guidance:
 ${note || feedback || 'Make it more specific, more casual, and less generic.'}
 
+${topicBlock}
+
 Trend research to study, not copy:
 ${JSON.stringify(compactTrends(trends || []).slice(0, 12), null, 2)}
+
+${hashtagBlock}
 
 ${learning ? learningForPrompt(learning) : ''}
 
@@ -405,12 +454,12 @@ Return ONLY JSON:
       ]
     },
     "caption": "caption",
-    "hashtags": ["three", "relevant", "hashtags"],
+    "hashtags": ["aitools", "aiprompts", "facelesscontent", "fyp"],
     "rationale": "why this is stronger"
   }
 }`
-    const parsed = await chatJSON({ apiKey, model, prompt })
-    return mergeRewrite(slideshow, parsed.slideshow || parsed)
+    const parsed = await chatJSON({ provider, apiKey, model, prompt })
+    return mergeRewrite(slideshow, parsed.slideshow || parsed, brain)
   }
 
   const prompt = `Rewrite this carousel to improve quality while preserving the idea and brand fit.
@@ -423,8 +472,12 @@ Account:
 Rewrite guidance:
 ${note || feedback || 'Make it sharper, more specific, and less generic.'}
 
+${topicBlock}
+
 Trend research to study, not copy:
 ${JSON.stringify(compactTrends(trends || []).slice(0, 12), null, 2)}
+
+${hashtagBlock}
 
 ${learning ? learningForPrompt(learning) : ''}
 
@@ -437,15 +490,15 @@ Return ONLY JSON:
     "hook": "max ~8 words",
     "slides": ["5-6 short slide lines, last is a CTA"],
     "caption": "caption with 1-2 emoji",
-    "hashtags": ["three", "relevant", "hashtags"],
+    "hashtags": ["aiprompts", "aiimages", "promptengineering", "fyp"],
     "rationale": "why the rewrite is stronger"
   }
 }`
-  const parsed = await chatJSON({ apiKey, model, prompt })
-  return mergeRewrite(slideshow, parsed.slideshow || parsed)
+  const parsed = await chatJSON({ provider, apiKey, model, prompt })
+  return mergeRewrite(slideshow, parsed.slideshow || parsed, brain)
 }
 
-async function applyQuality({ apiKey, model, brain, slideshow, options }) {
+async function applyQuality({ provider, apiKey, model, brain, slideshow, options }) {
   const qualityMode = options.qualityMode || 'off'
   const threshold = clampNumber(options.minScore ?? 7, 7)
   const maxAttempts = Math.min(Math.max(Math.round(Number(options.maxRewriteAttempts) || 1), 0), 5)
@@ -453,12 +506,13 @@ async function applyQuality({ apiKey, model, brain, slideshow, options }) {
 
   let current = slideshow
   let attempts = 0
-  let score = await scoreSlideshow({ apiKey, model, brain, slideshow: current, threshold })
+  let score = await scoreSlideshow({ provider, apiKey, model, brain, slideshow: current, threshold })
   while (score.qualityScore < threshold && attempts < maxAttempts) {
     attempts++
     try {
       current = await rewriteSlideshow({
         apiKey,
+        provider,
         model,
         brain,
         slideshow: current,
@@ -466,7 +520,7 @@ async function applyQuality({ apiKey, model, brain, slideshow, options }) {
         trends: options.trends,
         learning: options.learning,
       })
-      score = await scoreSlideshow({ apiKey, model, brain, slideshow: current, threshold })
+      score = await scoreSlideshow({ provider, apiKey, model, brain, slideshow: current, threshold })
     } catch (e) {
       score = {
         ...score,
@@ -486,7 +540,7 @@ async function applyQuality({ apiKey, model, brain, slideshow, options }) {
 
 const BATCH = 6
 
-export async function generateSlideshows({ apiKey, model, brain, count = 4, options = {} }) {
+export async function generateSlideshows({ provider = 'openrouter', apiKey, model, brain, count = 4, options = {} }) {
   const qualityMode = options.qualityMode || 'off'
   log.start(`Generating ${count} slideshow${count === 1 ? '' : 's'} with ${model}`)
   if (brain?.niche) log.info(`niche: ${brain.niche}${brain.appName ? ` - ${brain.appName}` : ''}`)
@@ -499,7 +553,7 @@ export async function generateSlideshows({ apiKey, model, brain, count = 4, opti
     safety++
     const n = Math.min(BATCH, count - raw.length)
     log.step(`asking model for ${n} more (${raw.length}/${count} so far)...`)
-    const parsed = await chatJSON({ apiKey, model, prompt: buildPrompt(brain, n, options) })
+    const parsed = await chatJSON({ provider, apiKey, model, prompt: buildPrompt(brain, n, options) })
     const batch = parsed.slideshows || []
     if (!batch.length) {
       log.warn('model returned no slideshows - stopping early')
@@ -517,9 +571,11 @@ export async function generateSlideshows({ apiKey, model, brain, count = 4, opti
     postFormat: options.postFormat,
     contentBucket: options.contentBucket,
     ctaKeyword: options.ctaKeyword,
+    topicMode: options.topicMode,
+    topic: options.topic,
     trendSourcesUsed: options.trends?.length ? options.trends.map((t) => t.id).slice(0, 40) : undefined,
   }
-  const normalized = raw.slice(0, count).map((s, i) => normalizeRawSlideshow(s, i, stamp, baseMeta))
+  const normalized = raw.slice(0, count).map((s, i) => normalizeRawSlideshow(s, i, stamp, brain, baseMeta))
   if (qualityMode === 'off') {
     log.ok(`Generated ${normalized.length} slideshow${normalized.length === 1 ? '' : 's'}`)
     return normalized
@@ -527,7 +583,7 @@ export async function generateSlideshows({ apiKey, model, brain, count = 4, opti
 
   const reviewed = []
   for (const show of normalized) {
-    const improved = await applyQuality({ apiKey, model, brain, slideshow: show, options })
+    const improved = await applyQuality({ provider, apiKey, model, brain, slideshow: show, options })
     const passes = Number(improved.qualityScore || 0) >= Number(options.minScore || 7)
     if (qualityMode === 'strict' && !passes) {
       log.warn(`dropping ${show.id}: quality score ${improved.qualityScore}/10 below threshold`)
@@ -539,10 +595,11 @@ export async function generateSlideshows({ apiKey, model, brain, count = 4, opti
   return reviewed
 }
 
-export async function improveSlideshow({ apiKey, model, brain, slideshow, note, trends = [], learning = null, threshold = 7 }) {
+export async function improveSlideshow({ provider = 'openrouter', apiKey, model, brain, slideshow, note, trends = [], learning = null, threshold = 7 }) {
   const currentFeedback = slideshow.qualityFeedback || ''
   const rewritten = await rewriteSlideshow({
     apiKey,
+    provider,
     model,
     brain,
     slideshow,
@@ -551,7 +608,7 @@ export async function improveSlideshow({ apiKey, model, brain, slideshow, note, 
     trends,
     learning,
   })
-  const score = await scoreSlideshow({ apiKey, model, brain, slideshow: rewritten, threshold })
+  const score = await scoreSlideshow({ provider, apiKey, model, brain, slideshow: rewritten, threshold })
   return {
     ...rewritten,
     ...score,

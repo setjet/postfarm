@@ -3,7 +3,7 @@ import { Check, X, Loader2, KeyRound, Trash2, Info } from 'lucide-react';
 import type { AppConfig, Project, SocialAccount, ModelOption } from '../types';
 import { ViewHeader } from '../components/ViewHeader';
 import { Button } from '../components/Button';
-import { testKeys, getModels } from '../lib/api';
+import { testKeys, getModels, getDeepSeekModels } from '../lib/api';
 import { PackPicker } from '../components/PackPicker';
 
 interface SettingsViewProps {
@@ -13,7 +13,9 @@ interface SettingsViewProps {
   canDelete: boolean;
   onSave: (patch: {
     keys?: AppConfig['keys'];
+    aiProvider?: AppConfig['aiProvider'];
     model?: string;
+    models?: AppConfig['models'];
     pinterestActor?: string;
     name?: string;
     defaults?: Project['defaults'];
@@ -47,20 +49,30 @@ export function SettingsView({
 }: SettingsViewProps) {
   const [postbridge, setPostbridge] = useState(config.keys.postbridge);
   const [openrouter, setOpenrouter] = useState(config.keys.openrouter);
+  const [deepseek, setDeepseek] = useState(config.keys.deepseek || '');
+  const [aiProvider, setAiProvider] = useState<AppConfig['aiProvider']>(config.aiProvider || 'openrouter');
   const [apify, setApify] = useState(config.keys.apify);
   const [pinterestActor, setPinterestActor] = useState(config.pinterestActor);
-  const [model, setModel] = useState(config.model);
+  const [openrouterModel, setOpenrouterModel] = useState(config.models?.openrouter || config.model);
+  const [deepseekModel, setDeepseekModel] = useState(config.models?.deepseek || 'deepseek-v4-flash');
   const [name, setName] = useState(project.name);
   const [mode, setMode] = useState(project.defaults.mode);
   const [selected, setSelected] = useState<number[]>(project.defaults.socialAccountIds);
   const [imagePacks, setImagePacks] = useState<string[]>(project.imagePacks);
   const [models, setModels] = useState<ModelOption[]>([]);
+  const [deepseekModels, setDeepseekModels] = useState<ModelOption[]>([
+    { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' },
+    { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro' },
+    { id: 'deepseek-chat', name: 'DeepSeek Chat' },
+    { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner' },
+  ]);
   const [modelFilter, setModelFilter] = useState('');
+  const [deepseekCustom, setDeepseekCustom] = useState('');
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [test, setTest] = useState<{ postbridge: boolean; openrouter: boolean; apify: boolean; errors: Record<string, string> } | null>(null);
+  const [test, setTest] = useState<{ postbridge: boolean; openrouter: boolean; deepseek: boolean; apify: boolean; errors: Record<string, string> } | null>(null);
 
   // Re-sync editable fields when the active project changes (switching projects).
   useEffect(() => {
@@ -72,6 +84,7 @@ export function SettingsView({
 
   useEffect(() => {
     getModels().then(setModels).catch(() => setModels([]));
+    getDeepSeekModels().then(setDeepseekModels).catch(() => {});
   }, []);
 
   const save = async () => {
@@ -80,8 +93,10 @@ export function SettingsView({
     setSaveError(null);
     try {
       await onSave({
-        keys: { postbridge, openrouter, apify },
-        model,
+        keys: { postbridge, openrouter, deepseek, apify },
+        aiProvider,
+        model: openrouterModel,
+        models: { openrouter: openrouterModel, deepseek: deepseekModel },
         pinterestActor,
         name,
         defaults: { socialAccountIds: selected, mode },
@@ -118,6 +133,8 @@ export function SettingsView({
           m.name.toLowerCase().includes(modelFilter.toLowerCase())
       )
     : models;
+  const activeProviderLabel = aiProvider === 'deepseek' ? 'DeepSeek' : 'OpenRouter';
+  const deepseekModelIsListed = deepseekModels.some((m) => m.id === deepseekModel);
 
   return (
     <>
@@ -160,6 +177,32 @@ export function SettingsView({
               />
               <TestBadge ok={test?.postbridge} error={test?.errors?.postbridge} />
             </Field>
+            <Field label="AI provider" hint={`${activeProviderLabel} is used for generation, scoring, rewrites, trends, and learning.`}>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAiProvider('openrouter')}
+                  className={`h-10 rounded-lg border px-3 text-[12px] font-semibold transition-colors ${
+                    aiProvider === 'openrouter'
+                      ? 'border-accent/70 bg-accent/15 text-ink'
+                      : 'border-line bg-raised text-ink-4 hover:border-line-2 hover:text-ink'
+                  }`}
+                >
+                  OpenRouter
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAiProvider('deepseek')}
+                  className={`h-10 rounded-lg border px-3 text-[12px] font-semibold transition-colors ${
+                    aiProvider === 'deepseek'
+                      ? 'border-accent/70 bg-accent/15 text-ink'
+                      : 'border-line bg-raised text-ink-4 hover:border-line-2 hover:text-ink'
+                  }`}
+                >
+                  DeepSeek
+                </button>
+              </div>
+            </Field>
             <Field label="OpenRouter API key" hint="Runs the AI that writes your slideshows — one key, any model. Get one at openrouter.ai/keys.">
               <input
                 value={openrouter}
@@ -168,6 +211,15 @@ export function SettingsView({
                 className={`${inputClass} font-mono`}
               />
               <TestBadge ok={test?.openrouter} error={test?.errors?.openrouter} />
+            </Field>
+            <Field label="DeepSeek API key" hint="Used when DeepSeek is the selected AI provider.">
+              <input
+                value={deepseek}
+                onChange={(e) => setDeepseek(e.target.value)}
+                placeholder="sk-..."
+                className={`${inputClass} font-mono`}
+              />
+              <TestBadge ok={test?.deepseek} error={test?.errors?.deepseek} />
             </Field>
             <Field label="Apify API key (optional)" hint="Only needed to scrape MORE Pinterest images. The bundled aesthetic packs work without it. Get one at console.apify.com.">
               <input
@@ -186,22 +238,54 @@ export function SettingsView({
                 className={`${inputClass} font-mono`}
               />
             </Field>
-            <Field label="Model" hint={`Pick any model OpenRouter offers${models.length ? ` (${models.length} available)` : ''}.`}>
+            {aiProvider === 'openrouter' ? (
+              <Field label="OpenRouter model" hint={`Pick any model OpenRouter offers${models.length ? ` (${models.length} available)` : ''}.`}>
               <input
                 value={modelFilter}
                 onChange={(e) => setModelFilter(e.target.value)}
-                placeholder="Filter models… e.g. claude, gpt, llama"
+                placeholder="Filter models... e.g. claude, gpt, llama"
                 className={`${inputClass} mb-2`}
               />
-              <select value={model} onChange={(e) => setModel(e.target.value)} className={inputClass}>
-                {model && !filtered.some((m) => m.id === model) && <option value={model}>{model}</option>}
+              <select value={openrouterModel} onChange={(e) => setOpenrouterModel(e.target.value)} className={inputClass}>
+                {openrouterModel && !filtered.some((m) => m.id === openrouterModel) && <option value={openrouterModel}>{openrouterModel}</option>}
                 {filtered.map((m) => (
                   <option key={m.id} value={m.id}>
                     {m.name}
                   </option>
                 ))}
               </select>
-            </Field>
+              </Field>
+            ) : (
+              <Field label="DeepSeek model" hint="Choose a DeepSeek model or enter a custom model ID.">
+                <select
+                  value={deepseekModelIsListed ? deepseekModel : 'custom'}
+                  onChange={(e) => {
+                    if (e.target.value === 'custom') {
+                      setDeepseekModel(deepseekCustom);
+                    } else {
+                      setDeepseekModel(e.target.value);
+                    }
+                  }}
+                  className={`${inputClass} mb-2`}
+                >
+                  {deepseekModels.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+                  <option value="custom">Custom model ID</option>
+                </select>
+                <input
+                  value={deepseekModelIsListed ? deepseekCustom : deepseekModel}
+                  onChange={(e) => {
+                    setDeepseekCustom(e.target.value);
+                    setDeepseekModel(e.target.value.trim());
+                  }}
+                  placeholder="deepseek-v4-flash"
+                  className={`${inputClass} font-mono`}
+                />
+              </Field>
+            )}
           </Section>
 
           {/* Posting defaults (per project) */}

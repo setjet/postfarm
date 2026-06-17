@@ -21,12 +21,32 @@ import {
 } from './store.js'
 import { listAccounts, listPosts, listAnalytics, syncAnalytics, uploadMedia, createPost } from './postbridge.js'
 import { generateSlideshows, improveSlideshow } from './generate.js'
-import { listModels, validateKey } from './openrouter.js'
-import { listLibrary, listPacks, scrapePinterest, removeScraped, getScrapedFile } from './library.js'
-import { listVideos, importVideoUrl, scrapeVideos, removeVideo, getVideoFile } from './videoLibrary.js'
+import { listModels } from './openrouter.js'
+import { listDeepSeekModels, providerKey, providerModel, validateProviderKey } from './ai.js'
+import {
+  listLibrary,
+  listPacks,
+  scrapePinterest,
+  removeScraped,
+  getScrapedFile,
+  importImages,
+  moveImageToFolder,
+  moveImagesFromFolder,
+} from './library.js'
+import {
+  listVideos,
+  importVideoUrl,
+  scrapeVideos,
+  removeVideo,
+  getVideoFile,
+  moveVideoToFolder,
+  moveVideosFromFolder,
+} from './videoLibrary.js'
 import { renderVideoPost } from './videoRender.js'
 import { listTrends, scrapeTrends, removeTrend, clearTrends, trendsForPrompt } from './trends.js'
 import { getLearningMemory, rebuildLearningMemory, clearLearningMemory } from './learning.js'
+import { normalizeHashtags } from './hashtags.js'
+import { UNCATEGORIZED_FOLDER_ID, createFolder, deleteFolder, listFolders, renameFolder } from './folders.js'
 import { logger } from './log.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -39,7 +59,7 @@ const PORT = process.env.PORT || 8787
 // only if you know what you're doing (e.g. a firewalled headless box).
 const HOST = process.env.HOST || '127.0.0.1'
 const app = express()
-app.use(express.json({ limit: '50mb' })) // base64 slide images can be large
+app.use(express.json({ limit: '100mb' })) // rendered slides and multi-image imports can be large
 
 // DNS-rebinding guard: a malicious website can point its own domain at
 // 127.0.0.1 and read API responses from the visitor's browser, bypassing
@@ -71,15 +91,20 @@ app.post('/api/projects/:id/activate', h(async (req, res) => res.json(setActiveP
 
 // Validate that the saved keys actually work, so Settings can show a green check.
 app.post('/api/config/test', h(async (_req, res) => {
-  const { keys } = getConfig()
-  const result = { postbridge: false, openrouter: false, apify: false, errors: {} }
+  const config = getConfig()
+  const { keys } = config
+  const result = { postbridge: false, openrouter: false, deepseek: false, apify: false, errors: {} }
   if (keys.postbridge) {
     try { await listAccounts(keys.postbridge); result.postbridge = true }
     catch (e) { result.errors.postbridge = e.message }
   }
   if (keys.openrouter) {
-    try { await validateKey(keys.openrouter); result.openrouter = true }
+    try { await validateProviderKey({ provider: 'openrouter', apiKey: keys.openrouter, model: config.models?.openrouter || config.model }); result.openrouter = true }
     catch (e) { result.errors.openrouter = e.message }
+  }
+  if (keys.deepseek) {
+    try { await validateProviderKey({ provider: 'deepseek', apiKey: keys.deepseek, model: config.models?.deepseek }); result.deepseek = true }
+    catch (e) { result.errors.deepseek = e.message }
   }
   if (keys.apify) {
     try {
@@ -93,6 +118,7 @@ app.post('/api/config/test', h(async (_req, res) => {
 
 // Public model catalog for the Settings dropdown.
 app.get('/api/models', h(async (_req, res) => res.json(await listModels())))
+app.get('/api/models/deepseek', h(async (_req, res) => res.json(await listDeepSeekModels(getConfig().keys.deepseek))))
 
 // Trend mining
 app.get('/api/trends', h(async (_req, res) => res.json(listTrends(getActiveProject().id))))
@@ -116,14 +142,21 @@ app.get('/api/queue', h(async (_req, res) => {
 }))
 
 app.post('/api/generate', h(async (req, res) => {
-  const { keys, model } = getConfig()
+  const config = getConfig()
+  const provider = config.aiProvider || 'openrouter'
+  const model = providerModel(config, provider)
+  const apiKey = providerKey(config.keys, provider)
   const project = getActiveProject()
   const count = Math.min(Math.max(Math.round(Number(req.body?.count) || 4), 1), 100)
+  if (req.body?.topicMode === 'custom' && !String(req.body?.topic || '').trim()) {
+    throw new Error('Enter a topic, or switch Topic mode back to General.')
+  }
   const trendIds = Array.isArray(req.body?.trendIds) ? req.body.trendIds : []
   const trends = req.body?.useTrends || trendIds.length ? trendsForPrompt(project.id, trendIds) : []
   const learning = req.body?.useLearning ? getLearningMemory(project.id) : null
   const slideshows = await generateSlideshows({
-    apiKey: keys.openrouter,
+    provider,
+    apiKey,
     model,
     brain: project.brain,
     count,
@@ -135,6 +168,8 @@ app.post('/api/generate', h(async (req, res) => {
       maxRewriteAttempts: req.body?.maxRewriteAttempts,
       contentBucket: req.body?.contentBucket,
       ctaKeyword: req.body?.ctaKeyword,
+      topicMode: req.body?.topicMode === 'custom' ? 'custom' : 'general',
+      topic: req.body?.topicMode === 'custom' ? String(req.body?.topic || '').trim() : undefined,
       postFormat: req.body?.postFormat === 'notes' ? 'notes' : 'standard',
     },
   })
@@ -143,7 +178,10 @@ app.post('/api/generate', h(async (req, res) => {
   // Generate modal) wins; otherwise fall back to the project's saved packs.
   // Empty selection → slides keep their gradients.
   const packs = Array.isArray(req.body?.packs) ? req.body.packs : project.imagePacks || []
-  const pool = packs.length ? listLibrary().filter((i) => packs.includes(i.pack)) : []
+  const folderIds = Array.isArray(req.body?.folderIds) ? req.body.folderIds : []
+  const pool = packs.length || folderIds.length
+    ? listLibrary().filter((i) => packs.includes(i.pack) || folderIds.includes(i.folderId))
+    : []
   if (pool.length) {
     genLog.step(`assigning backgrounds from ${packs.length} pack${packs.length === 1 ? '' : 's'} (${pool.length} images)`)
     for (const show of slideshows) {
@@ -176,19 +214,24 @@ app.put('/api/queue/:id', h(async (req, res) => {
     if (s.id !== req.params.id) return s
     const merged = { ...s }
     for (const k of allowed) if (patch[k] !== undefined) merged[k] = patch[k]
+    if (patch.hashtags !== undefined) merged.hashtags = normalizeHashtags(patch.hashtags, { brain: getActiveProject().brain })
     return merged
   })
   res.json(setQueue(pid, next))
 }))
 
 app.post('/api/queue/:id/rewrite', h(async (req, res) => {
-  const { keys, model } = getConfig()
+  const config = getConfig()
+  const provider = config.aiProvider || 'openrouter'
+  const model = providerModel(config, provider)
+  const apiKey = providerKey(config.keys, provider)
   const project = getActiveProject()
   const queue = getQueue(project.id)
   const current = queue.find((s) => s.id === req.params.id)
   if (!current) throw new Error('This slideshow is no longer in the queue.')
   const improved = await improveSlideshow({
-    apiKey: keys.openrouter,
+    provider,
+    apiKey,
     model,
     brain: project.brain,
     slideshow: current,
@@ -203,14 +246,30 @@ app.post('/api/queue/:id/rewrite', h(async (req, res) => {
 // ── Image library (bundled aesthetic packs + Pinterest scrapes via Apify) ────────
 app.get('/api/library', h(async (_req, res) => res.json(listLibrary())))
 app.get('/api/library/packs', h(async (_req, res) => res.json(listPacks())))
+app.get('/api/library/folders', h(async (_req, res) => res.json(listFolders())))
+app.post('/api/library/folders', h(async (req, res) => res.json(createFolder(req.body || {}))))
+app.put('/api/library/folders/:id', h(async (req, res) => res.json(renameFolder(req.params.id, req.body || {}))))
+app.delete('/api/library/folders/:id', h(async (req, res) => {
+  moveImagesFromFolder(req.params.id, UNCATEGORIZED_FOLDER_ID)
+  moveVideosFromFolder(req.params.id, UNCATEGORIZED_FOLDER_ID)
+  res.json(deleteFolder(req.params.id))
+}))
 
 app.post('/api/library/scrape', h(async (req, res) => {
   const { keys, pinterestActor } = getConfig()
-  const { searches, count } = req.body || {}
-  res.json(await scrapePinterest({ apiKey: keys.apify, actor: pinterestActor, searches, count }))
+  const { searches, count, folderId } = req.body || {}
+  res.json(await scrapePinterest({ apiKey: keys.apify, actor: pinterestActor, searches, count, folderId }))
 }))
 
+app.post('/api/library/import', h(async (req, res) => res.json(importImages(req.body || {}))))
+
 app.delete('/api/library/:id', h(async (req, res) => res.json(removeScraped(req.params.id))))
+
+app.put('/api/library/assets/:id/folder', h(async (req, res) => {
+  const type = req.body?.type === 'video' ? 'video' : 'image'
+  const folderId = req.body?.folderId
+  res.json(type === 'video' ? moveVideoToFolder(req.params.id, folderId) : moveImageToFolder(req.params.id, folderId))
+}))
 
 app.get('/api/library/img/:id', h(async (req, res) => {
   const file = getScrapedFile(req.params.id)
@@ -224,14 +283,14 @@ app.get('/api/library/img/:id', h(async (req, res) => {
 app.get('/api/videos', h(async (_req, res) => res.json(listVideos())))
 
 app.post('/api/videos/import', h(async (req, res) => {
-  const { url, pack } = req.body || {}
-  res.json(await importVideoUrl({ url, pack }))
+  const { url, pack, folderId } = req.body || {}
+  res.json(await importVideoUrl({ url, pack, folderId }))
 }))
 
 app.post('/api/videos/scrape', h(async (req, res) => {
   const { keys } = getConfig()
-  const { source, count, actor } = req.body || {}
-  res.json(await scrapeVideos({ apiKey: keys.apify, actor, source, count }))
+  const { source, count, actor, folderId } = req.body || {}
+  res.json(await scrapeVideos({ apiKey: keys.apify, actor, source, count, folderId }))
 }))
 
 app.delete('/api/videos/:id', h(async (req, res) => res.json(removeVideo(req.params.id))))
@@ -270,10 +329,13 @@ app.post('/api/results/sync', h(async (_req, res) => {
 app.get('/api/learning', h(async (_req, res) => res.json(getLearningMemory(getActiveProject().id))))
 
 app.post('/api/learning/rebuild', h(async (_req, res) => {
-  const { keys, model } = getConfig()
+  const config = getConfig()
+  const provider = config.aiProvider || 'openrouter'
+  const model = providerModel(config, provider)
+  const apiKey = providerKey(config.keys, provider)
   const project = getActiveProject()
-  const analytics = await listAnalytics(keys.postbridge)
-  res.json(await rebuildLearningMemory({ apiKey: keys.openrouter, model, project, analytics }))
+  const analytics = await listAnalytics(config.keys.postbridge)
+  res.json(await rebuildLearningMemory({ provider, apiKey, model, project, analytics }))
 }))
 
 app.delete('/api/learning', h(async (_req, res) => res.json(clearLearningMemory(getActiveProject().id))))
