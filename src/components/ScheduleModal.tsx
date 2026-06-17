@@ -80,12 +80,12 @@ export function ScheduleModal({ slideshow, accounts, defaults, onClose, onConfir
   if (doneMode) {
     const scheduled = doneMode === 'schedule';
     return (
-      <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="fixed inset-0 z-50 bg-black/55 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
         <div
-          className="bg-card border border-line rounded-2xl w-full max-w-sm p-6 text-center"
+          className="bg-surface border border-line rounded-2xl w-full max-w-sm p-6 text-center shadow-main fade-up"
           onClick={(e) => e.stopPropagation()}
         >
-          <CheckCircle2 size={32} className="text-emerald-600 mx-auto" />
+          <CheckCircle2 size={32} className="text-success mx-auto" />
           <h2 className="text-[16px] font-semibold text-ink mt-3">
             {scheduled ? 'Scheduled' : 'Saved as draft'}
           </h2>
@@ -99,7 +99,7 @@ export function ScheduleModal({ slideshow, accounts, defaults, onClose, onConfir
               href={scheduled ? PB_SCHEDULED_URL : PB_DRAFTS_URL}
               target="_blank"
               rel="noreferrer"
-              className="flex items-center justify-center gap-1.5 h-9 rounded-lg bg-ink text-bg text-[13px] font-medium hover:opacity-90"
+              className="flex items-center justify-center gap-1.5 h-9 rounded-lg bg-ink text-bg text-[13px] font-medium shadow-main hover:opacity-90"
             >
               View on post-bridge <ExternalLink size={13} />
             </a>
@@ -113,14 +113,14 @@ export function ScheduleModal({ slideshow, accounts, defaults, onClose, onConfir
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/55 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
       <div
-        className="bg-card border border-line rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto"
+        className="bg-surface border border-line rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-main fade-up"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-line">
           <h2 className="text-[15px] font-semibold text-ink">Schedule slideshow</h2>
-          <button onClick={onClose} className="text-ink-5 hover:text-ink">
+          <button onClick={onClose} className="w-8 h-8 rounded-lg text-ink-5 hover:text-ink hover:bg-white/[0.055] flex items-center justify-center">
             <X size={18} />
           </button>
         </div>
@@ -148,7 +148,7 @@ export function ScheduleModal({ slideshow, accounts, defaults, onClose, onConfir
                   href="https://post-bridge.com?atp=clip-factory"
                   target="_blank"
                   rel="noreferrer"
-                  className="text-ink-4 underline hover:text-ink"
+                  className="text-accent underline decoration-white/20 hover:text-ink"
                 >
                   post-bridge.com
                 </a>
@@ -159,7 +159,7 @@ export function ScheduleModal({ slideshow, accounts, defaults, onClose, onConfir
                 {accounts.map((a) => (
                   <label
                     key={a.id}
-                    className="flex items-center gap-2.5 px-3 py-2 rounded-lg border border-line cursor-pointer hover:border-line-2"
+                    className="flex items-center gap-2.5 px-3 py-2 rounded-lg border border-line bg-raised cursor-pointer hover:border-line-2"
                   >
                     <input type="checkbox" checked={selected.includes(a.id)} onChange={() => toggle(a.id)} />
                     <span className="text-[13px] text-ink font-medium">{a.username}</span>
@@ -188,12 +188,12 @@ export function ScheduleModal({ slideshow, accounts, defaults, onClose, onConfir
                 type="datetime-local"
                 value={when}
                 onChange={(e) => setWhen(e.target.value)}
-                className="w-full h-9 bg-card border border-line rounded-lg px-3 text-[13px] text-ink outline-none focus:border-ink-7 focus:ring-2 focus:ring-ink/10"
+                className="w-full h-10 bg-raised border border-line rounded-lg px-3 text-[13px] text-ink outline-none focus:border-line-2"
               />
             )}
 
-            <div className="flex items-start gap-2 mt-2 p-2.5 rounded-lg bg-surface border border-line">
-              <Info size={13} className="text-ink-5 mt-0.5 shrink-0" />
+            <div className="flex items-start gap-2 mt-2 p-2.5 rounded-lg bg-[#101010] border border-line">
+              <Info size={13} className="text-accent mt-0.5 shrink-0" />
               <p className="text-[11px] text-ink-4 leading-snug">
                 {mode === 'draft' ? (
                   <>
@@ -208,10 +208,10 @@ export function ScheduleModal({ slideshow, accounts, defaults, onClose, onConfir
             </div>
           </div>
 
-          {error && <p className="text-[12px] text-red-600">{error}</p>}
+          {error && <p className="text-[12px] text-danger">{error}</p>}
         </div>
 
-        <div className="px-5 py-4 border-t border-line flex justify-end gap-2">
+        <div className="px-5 py-4 border-t border-line bg-[#101010] flex justify-end gap-2">
           <Button variant="secondary" onClick={onClose} disabled={busy}>
             Cancel
           </Button>

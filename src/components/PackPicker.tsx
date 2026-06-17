@@ -30,15 +30,15 @@ export function PackPicker({ selected, onChange, disabled }: PackPickerProps) {
           {selected.length ? `${selected.length} of ${allNames.length} selected` : 'None — plain gradients'}
         </span>
         <div className="flex gap-2">
-          <button onClick={() => onChange(allNames)} disabled={disabled} className="text-[11px] text-ink-5 hover:text-ink disabled:opacity-50">All</button>
-          <button onClick={() => onChange([])} disabled={disabled} className="text-[11px] text-ink-5 hover:text-ink disabled:opacity-50">None</button>
+          <button onClick={() => onChange(allNames)} disabled={disabled} className="text-[11px] text-ink-5 hover:text-accent disabled:opacity-50">All</button>
+          <button onClick={() => onChange([])} disabled={disabled} className="text-[11px] text-ink-5 hover:text-accent disabled:opacity-50">None</button>
         </div>
       </div>
 
       {packs === null ? (
         <div className="text-[12px] text-ink-5 py-6 text-center">Loading packs…</div>
       ) : (
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
           {packs.map((pack) => {
             const on = selected.includes(pack.name);
             return (
@@ -47,7 +47,7 @@ export function PackPicker({ selected, onChange, disabled }: PackPickerProps) {
                 onClick={() => toggle(pack.name)}
                 disabled={disabled}
                 className={`relative rounded-lg overflow-hidden border text-left transition-all disabled:opacity-50 ${
-                  on ? 'border-ink ring-2 ring-ink' : 'border-line hover:border-line-2'
+                  on ? 'border-accent ring-1 ring-accent shadow-main' : 'border-line hover:border-line-2 hover:-translate-y-0.5'
                 }`}
               >
                 {/* 2×2 cover collage */}
@@ -67,7 +67,7 @@ export function PackPicker({ selected, onChange, disabled }: PackPickerProps) {
                 </div>
                 {/* Selected check */}
                 {on && (
-                  <span className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-ink text-bg flex items-center justify-center">
+                  <span className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-accent text-bg flex items-center justify-center shadow-main">
                     <Check size={12} />
                   </span>
                 )}

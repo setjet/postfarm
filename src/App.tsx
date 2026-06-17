@@ -170,7 +170,9 @@ export default function App() {
   if (!config || !activeProject) {
     return (
       <div className="h-full w-full flex items-center justify-center bg-bg text-ink-5 text-[13px]">
-        {error ? <span className="text-red-600 max-w-sm text-center">{error}</span> : 'Loading…'}
+        <div className="glass-panel rounded-xl px-4 py-3">
+          {error ? <span className="text-danger max-w-sm text-center block">{error}</span> : 'Loading...'}
+        </div>
       </div>
     );
   }
@@ -187,9 +189,9 @@ export default function App() {
         onSwitchProject={switchProject}
         onNewProject={newProject}
       />
-      <main className="flex-1 h-full overflow-hidden flex flex-col">
+      <main className="flex-1 h-full overflow-hidden flex flex-col app-main">
         {error && activeView !== 'settings' && (
-          <div className="px-8 py-2 bg-red-50 border-b border-red-200 text-[12px] text-red-700">
+          <div className="px-4 sm:px-8 py-2 bg-red-500/10 border-b border-red-500/20 text-[12px] text-danger">
             {error}
           </div>
         )}
@@ -251,7 +253,7 @@ export default function App() {
           accounts={accounts}
           defaults={activeProject.defaults}
           // Closing via the X/backdrop must still drop any now-scheduled items
-          // from the queue — otherwise it looks stale until a browser reload.
+          // from the queue immediately so it does not look stale until reload.
           onClose={async () => {
             setBulkOpen(false);
             setSelectedIds([]);

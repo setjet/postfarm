@@ -5,21 +5,30 @@
 @tailwind utilities;
 
 :root {
-  --bg:         #f5f5f5;
-  --surface:    #f9f9f9;
-  --card:       #ffffff;
-  --raised:     #ebebeb;
-  --ink:        #0a0a0a;
-  --ink-2:      #1c1c1c;
-  --ink-3:      #555555;
-  --ink-4:      #777777;
-  --ink-5:      #888888;
-  --ink-6:      #999999;
-  --ink-7:      #aaaaaa;
-  --ink-8:      #bbbbbb;
-  --ink-hover:  #222222;
-  --line:       #e5e5e5;
-  --line-2:     #d0d0d0;
+  --bg:         #151515;
+  --surface:    #1b1b1b;
+  --card:       #1b1b1b;
+  --raised:     #222222;
+  --control:    #303030;
+  --overlay:    rgb(255 255 255 / 0.055);
+  --ink:        #f3f3f3;
+  --ink-2:      #e8e8e8;
+  --ink-3:      #c7c7c7;
+  --ink-4:      #a6a6a6;
+  --ink-5:      #878787;
+  --ink-6:      #6f6f6f;
+  --ink-7:      #555555;
+  --ink-8:      #3c3c3c;
+  --ink-hover:  #ffffff;
+  --line:       rgb(255 255 255 / 0.085);
+  --line-2:     rgb(255 255 255 / 0.18);
+  --focus:      rgb(215 215 215 / 0.65);
+  --accent:     #7dd3fc;
+  --success:    #34d399;
+  --warning:    #f59e0b;
+  --danger:     #ff4d4d;
+  --shadow-main: 0 4px 14px rgb(0 0 0 / 0.12), 0 1px 1px rgb(0 0 0 / 0.22);
+  --shadow-field: 0 0 0 0.5px oklch(100% 0 0 / 0.055), 0 0.5px 0 oklch(100% 0 0 / 0.045) inset, 0 -1px 0 oklch(0% 0 0 / 0.55) inset;
 }
 
 * {
@@ -65,19 +74,58 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+::selection {
+  background: rgb(125 211 252 / 0.28);
+  color: var(--ink);
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease,
+    box-shadow 150ms ease, transform 150ms ease, opacity 150ms ease;
+}
+
+input,
+select,
+textarea {
+  color-scheme: dark;
+  box-shadow: var(--shadow-field);
+}
+
+input[type='checkbox'] {
+  accent-color: var(--accent);
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 1px solid var(--focus);
+  outline-offset: 2px;
+}
+
+select option {
+  background: var(--raised);
+  color: var(--ink);
+}
+
 ::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--line-2);
+  background: rgb(255 255 255 / 0.18);
   border-radius: 99px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--ink-7);
+  background: rgb(255 255 255 / 0.28);
 }
 
 .no-scrollbar::-webkit-scrollbar { display: none; }
@@ -88,8 +136,53 @@ body {
   100% { background-position: 200% center; }
 }
 
+@keyframes fadeUp {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .skeleton {
-  background: linear-gradient(90deg, var(--raised) 25%, var(--line) 50%, var(--raised) 75%);
+  background: linear-gradient(90deg, var(--raised) 25%, var(--overlay) 50%, var(--raised) 75%);
   background-size: 200% auto;
   animation: shimmer 1.8s linear infinite;
+}
+
+.glass-panel {
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-main);
+}
+
+.app-main {
+  background-color: var(--bg);
+}
+
+.fade-up {
+  animation: fadeUp 220ms ease both;
+}
+
+.text-gradient {
+  background: linear-gradient(90deg, #f3f3f3, #7dd3fc, #c084fc, #f3f3f3);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 3.6s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 1ms !important;
+  }
 }

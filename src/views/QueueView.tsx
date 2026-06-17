@@ -52,7 +52,7 @@ export function QueueView({
               </>
             ) : (
               slideshows.length > 0 && (
-                <Button variant="secondary" onClick={onSelectAll}>Select all</Button>
+                <Button variant="secondary" className="w-[128px]" onClick={onSelectAll}>Select all</Button>
               )
             )}
             <Button
@@ -60,8 +60,9 @@ export function QueueView({
               icon={generating ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
               onClick={onGenerate}
               disabled={generating || !canGenerate}
+              className="w-[128px]"
             >
-              {generating ? 'Generating…' : 'Generate more'}
+              {generating ? 'Generating...' : 'Generate more'}
             </Button>
           </>
         }
@@ -69,14 +70,14 @@ export function QueueView({
 
       {slideshows.length === 0 ? (
         <div className="flex-1 flex items-center justify-center p-8">
-          <div className="text-center max-w-sm">
-            <div className="w-12 h-12 rounded-full bg-raised flex items-center justify-center mx-auto mb-4">
-              <Check size={20} className="text-ink-5" />
+          <div className="text-center max-w-sm fade-up">
+            <div className="w-11 h-11 rounded-xl bg-raised border border-line flex items-center justify-center mx-auto mb-4 shadow-main">
+              <Check size={18} className="text-accent" />
             </div>
-            <h2 className="text-[15px] font-semibold text-ink">
+            <h2 className="text-[16px] font-semibold text-ink">
               {canGenerate ? 'Queue empty' : 'Add your OpenRouter key to start'}
             </h2>
-            <p className="text-[13px] text-ink-5 mt-1">
+            <p className="text-[13px] text-ink-5 mt-1.5 leading-relaxed">
               {canGenerate
                 ? 'Generate a fresh batch of slideshows with AI.'
                 : 'Head to Settings, paste your OpenRouter API key, and tune the Brain.'}
@@ -89,15 +90,15 @@ export function QueueView({
                   onClick={onGenerate}
                   disabled={generating}
                 >
-                  {generating ? 'Generating…' : 'Generate now'}
+                  {generating ? 'Generating...' : 'Generate now'}
                 </Button>
               </div>
             )}
           </div>
         </div>
       ) : (
-        <div className="flex-1 overflow-y-auto p-8">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 max-w-5xl mx-auto">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-8">
+          <div className="grid grid-cols-1 xl:grid-cols-2 items-start gap-4 max-w-6xl mx-auto">
             {slideshows.map((s) => (
               <SlideshowCard
                 key={s.id}
@@ -127,45 +128,38 @@ interface CardProps {
 
 function SlideshowCard({ slideshow, selected, onToggleSelect, onApprove, onReject, onEdit }: CardProps) {
   return (
-    <div className={`bg-card border rounded-xl overflow-hidden animate-fadeIn transition-colors ${selected ? 'border-ink ring-1 ring-ink' : 'border-line'}`}>
+    <div className={`self-start bg-surface border rounded-xl p-4 fade-up shadow-main transition-all hover:border-line-2 ${selected ? 'border-accent ring-1 ring-accent' : 'border-line'}`}>
       {/* Slide strip */}
-      <div className="relative p-4 bg-surface border-b border-line">
-        <label className="absolute top-2 left-2 z-10 w-6 h-6 rounded-md bg-card/90 border border-line flex items-center justify-center cursor-pointer shadow-sm">
+      <div className="relative">
+        <label className="absolute top-1.5 left-1.5 z-10 w-7 h-7 rounded-lg bg-[#1b1b1b]/95 border border-line flex items-center justify-center cursor-pointer shadow-main">
           <input type="checkbox" checked={selected} onChange={onToggleSelect} className="cursor-pointer" />
         </label>
-        <div className="grid grid-cols-6 gap-1.5">
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(58px,1fr))] gap-1.5">
           {slideshow.slides.map((slide) => (
-            <SlidePreview key={slide.id} slide={slide} />
+            <SlidePreview key={slide.id} slide={slide} className="rounded-md shadow-none" />
           ))}
         </div>
       </div>
 
       {/* Meta */}
-      <div className="p-4">
-        <div className="flex items-start gap-2 mb-2">
-          <Sparkles size={12} className="text-ink-6 mt-1 shrink-0" />
-          <span className="text-[11px] text-ink-5 leading-snug">
-            {slideshow.rationale}
-          </span>
-        </div>
-
-        <h3 className="text-[14px] font-semibold text-ink leading-snug mb-1.5">
+      <div className="mt-4">
+        <h3 className="text-[15px] font-semibold text-ink leading-snug mb-1.5">
           {slideshow.hook}
         </h3>
-        <p className="text-[12px] text-ink-4 leading-snug line-clamp-2">
+        <p className="text-[12px] text-ink-5 leading-relaxed line-clamp-2">
           {slideshow.caption}
         </p>
 
         <div className="flex flex-wrap gap-1 mt-2">
           {slideshow.hashtags.map((tag) => (
-            <span key={tag} className="text-[10px] text-ink-5 px-1.5 py-0.5 rounded bg-raised">
+            <span key={tag} className="text-[10px] text-ink-5 px-1.5 py-0.5 rounded-md bg-control border border-line">
               #{tag}
             </span>
           ))}
         </div>
 
         {/* Actions */}
-        <div className="flex items-center gap-2 mt-4 pt-3 border-t border-line">
+        <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2 mt-4 pt-3 border-t border-line">
           <Button variant="secondary" icon={<Pencil size={13} />} onClick={onEdit}>
             Edit
           </Button>

@@ -68,21 +68,21 @@ export function SlideshowEditorModal({ slideshow, onClose, onSave }: SlideshowEd
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/55 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
       <div
-        className="bg-card border border-line rounded-2xl w-full max-w-4xl max-h-[92vh] flex flex-col sm:flex-row overflow-hidden"
+        className="bg-surface border border-line rounded-2xl w-full max-w-4xl max-h-[92vh] flex flex-col sm:flex-row overflow-hidden shadow-main fade-up"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Preview */}
-        <div className="sm:flex-1 bg-surface flex flex-col items-center justify-center p-6 gap-3 min-w-0">
-          <div className="w-[200px] max-w-full">
+        <div className="sm:flex-1 bg-[#101010] flex flex-col items-center justify-center p-6 gap-3 min-w-0">
+          <div className="w-[230px] max-w-full">
             <SlidePreview slide={current} />
           </div>
           <div className="flex items-center gap-3">
             <button
               onClick={() => setIndex((i) => Math.max(0, i - 1))}
               disabled={index === 0}
-              className="w-9 h-9 rounded-full bg-card border border-line text-ink-4 hover:text-ink disabled:opacity-30 flex items-center justify-center"
+              className="w-9 h-9 rounded-lg bg-control border border-line text-ink-4 shadow-main hover:text-ink disabled:opacity-30 flex items-center justify-center"
             >
               <ChevronLeft size={16} />
             </button>
@@ -91,7 +91,7 @@ export function SlideshowEditorModal({ slideshow, onClose, onSave }: SlideshowEd
                 <button
                   key={i}
                   onClick={() => setIndex(i)}
-                  className={`h-1.5 rounded-full transition-all ${i === index ? 'w-5 bg-ink' : 'w-1.5 bg-line-2'}`}
+                  className={`h-1.5 rounded-full transition-all ${i === index ? 'w-5 bg-accent' : 'w-1.5 bg-line-2'}`}
                   aria-label={`Slide ${i + 1}`}
                 />
               ))}
@@ -99,7 +99,7 @@ export function SlideshowEditorModal({ slideshow, onClose, onSave }: SlideshowEd
             <button
               onClick={() => setIndex((i) => Math.min(total - 1, i + 1))}
               disabled={index === total - 1}
-              className="w-9 h-9 rounded-full bg-card border border-line text-ink-4 hover:text-ink disabled:opacity-30 flex items-center justify-center"
+              className="w-9 h-9 rounded-lg bg-control border border-line text-ink-4 shadow-main hover:text-ink disabled:opacity-30 flex items-center justify-center"
             >
               <ChevronRight size={16} />
             </button>
@@ -116,14 +116,14 @@ export function SlideshowEditorModal({ slideshow, onClose, onSave }: SlideshowEd
                   key={t}
                   onClick={() => setTab(t)}
                   className={`px-3 py-1.5 text-[12px] font-medium rounded-md transition-colors ${
-                    tab === t ? 'bg-raised text-ink' : 'text-ink-5 hover:text-ink-3'
+                    tab === t ? 'bg-raised text-ink shadow-main' : 'text-ink-5 hover:text-ink-3 hover:bg-white/[0.055]'
                   }`}
                 >
                   {t === 'post' ? 'Post' : `Slide ${index + 1}`}
                 </button>
               ))}
             </div>
-            <button onClick={onClose} className="text-ink-5 hover:text-ink">
+            <button onClick={onClose} className="w-8 h-8 rounded-lg text-ink-5 hover:text-ink hover:bg-white/[0.055] flex items-center justify-center">
               <X size={18} />
             </button>
           </div>
@@ -137,7 +137,7 @@ export function SlideshowEditorModal({ slideshow, onClose, onSave }: SlideshowEd
                     value={caption}
                     onChange={(e) => setCaption(e.target.value)}
                     rows={5}
-                    className="w-full bg-card border border-line rounded-lg px-3 py-2 text-[13px] text-ink resize-none outline-none focus:border-ink-7 focus:ring-2 focus:ring-ink/10"
+                    className="w-full bg-raised border border-line rounded-lg px-3 py-2 text-[13px] text-ink resize-none outline-none focus:border-line-2"
                   />
                   <span className="text-[10px] text-ink-6">{caption.length} chars</span>
                 </div>
@@ -147,7 +147,7 @@ export function SlideshowEditorModal({ slideshow, onClose, onSave }: SlideshowEd
                     value={hashtags}
                     onChange={(e) => setHashtags(e.target.value)}
                     placeholder="finance budgeting money"
-                    className="w-full h-9 bg-card border border-line rounded-lg px-3 text-[13px] text-ink outline-none focus:border-ink-7 focus:ring-2 focus:ring-ink/10"
+                    className="w-full h-10 bg-raised border border-line rounded-lg px-3 text-[13px] text-ink outline-none focus:border-line-2"
                   />
                   <span className="text-[10px] text-ink-6">Space or comma separated, no # needed.</span>
                 </div>
@@ -158,7 +158,7 @@ export function SlideshowEditorModal({ slideshow, onClose, onSave }: SlideshowEd
                   <div className="flex items-center justify-between mb-1.5">
                     <label className="text-[11px] text-ink-6 uppercase tracking-widest font-semibold">Slide {index + 1} text</label>
                     {total > 1 && (
-                      <button onClick={deleteSlide} className="text-[10px] text-ink-6 hover:text-red-600 flex items-center gap-1">
+                      <button onClick={deleteSlide} className="text-[10px] text-ink-6 hover:text-danger flex items-center gap-1">
                         <Trash2 size={11} /> Delete slide
                       </button>
                     )}
@@ -167,18 +167,18 @@ export function SlideshowEditorModal({ slideshow, onClose, onSave }: SlideshowEd
                     value={current.text}
                     onChange={(e) => patchSlide({ text: e.target.value })}
                     rows={3}
-                    className="w-full bg-card border border-line rounded-lg px-3 py-2 text-[13px] text-ink resize-none outline-none focus:border-ink-7 focus:ring-2 focus:ring-ink/10"
+                    className="w-full bg-raised border border-line rounded-lg px-3 py-2 text-[13px] text-ink resize-none outline-none focus:border-line-2"
                   />
                 </div>
 
                 <div>
-                  <div className="flex items-center justify-between mb-1.5">
+                  <div className="grid grid-cols-[auto_1fr] items-center gap-3 mb-1.5">
                     <label className="text-[11px] text-ink-6 uppercase tracking-widest font-semibold">Background</label>
-                    <div className="flex items-center gap-2">
+                    <div className="min-w-0">
                       <select
                         value={pack}
                         onChange={(e) => setPack(e.target.value)}
-                        className="h-7 bg-card border border-line rounded-md px-1.5 text-[11px] text-ink outline-none"
+                        className="h-8 w-full min-w-0 bg-raised border border-line rounded-md px-1.5 text-[11px] text-ink outline-none"
                       >
                         {packs.map((p) => (
                           <option key={p} value={p}>{p === 'all' ? 'All packs' : p}</option>
@@ -205,7 +205,7 @@ export function SlideshowEditorModal({ slideshow, onClose, onSave }: SlideshowEd
                           key={img.id}
                           onClick={() => patchSlide({ imageUrl: img.url })}
                           className={`aspect-[9/16] rounded-md overflow-hidden bg-raised transition-all ${
-                            current.imageUrl === img.url ? 'ring-2 ring-ink' : 'hover:ring-2 hover:ring-line-2'
+                            current.imageUrl === img.url ? 'ring-2 ring-accent' : 'hover:ring-2 hover:ring-line-2'
                           }`}
                         >
                           <img src={img.url} alt="" loading="lazy" className="w-full h-full object-cover" />
@@ -218,7 +218,7 @@ export function SlideshowEditorModal({ slideshow, onClose, onSave }: SlideshowEd
             )}
           </div>
 
-          <div className="px-4 py-3 border-t border-line flex justify-end gap-2">
+          <div className="px-4 py-3 border-t border-line bg-[#101010] flex justify-end gap-2">
             <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
             <Button
               variant="primary"

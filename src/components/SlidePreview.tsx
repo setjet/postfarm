@@ -18,7 +18,7 @@ export function SlidePreview({ slide, className = '', showText = true }: SlidePr
     <div
       // containerType: 'size' lets the caption's `cqh` units resolve to a percent
       // of THIS slide's height, so the text scales identically to the baked PNG.
-      className={`relative aspect-[9/16] rounded-md overflow-hidden bg-raised ${className}`}
+      className={`relative aspect-[9/16] rounded-lg overflow-hidden bg-raised border border-white/10 shadow-main ${className}`}
       style={background ? { background, ...SLIDE_CONTAINER_STYLE } : SLIDE_CONTAINER_STYLE}
     >
       {slide.imageUrl && (

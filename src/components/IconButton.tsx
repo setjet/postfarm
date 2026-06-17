@@ -12,25 +12,22 @@ interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const base =
   'inline-flex items-center justify-center rounded-lg ' +
-  'border transition-colors shrink-0 ' +
-  'outline-none focus-visible:ring-2 focus-visible:ring-offset-0 ' +
+  'border transition-all shrink-0 ' +
+  'outline-none ' +
   'disabled:opacity-50 disabled:pointer-events-none';
 
 const variants: Record<Variant, string> = {
   secondary:
-    'bg-transparent text-ink-4 border-line hover:bg-raised hover:text-ink-2 hover:border-line-2 ' +
-    'focus-visible:ring-ink/15',
+    'bg-control text-ink-4 border-line shadow-main hover:bg-[#363636] hover:text-ink hover:border-line-2',
   ghost:
-    'bg-transparent text-ink-5 border-transparent hover:bg-raised hover:text-ink-2 ' +
-    'focus-visible:ring-ink/10',
+    'bg-transparent text-ink-5 border-transparent hover:bg-white/[0.055] hover:text-ink-2',
   'danger-ghost':
-    'bg-transparent text-ink-5 border-transparent hover:bg-raised hover:text-red-600 ' +
-    'focus-visible:ring-red-500/20',
+    'bg-transparent text-ink-5 border-transparent hover:bg-red-500/10 hover:text-danger',
 };
 
 const sizes: Record<Size, string> = {
-  sm: 'w-7 h-7',
-  md: 'w-8 h-8',
+  sm: 'w-8 h-8',
+  md: 'w-9 h-9',
 };
 
 export function IconButton({

@@ -26,15 +26,15 @@ interface SettingsViewProps {
 const POSTBRIDGE_URL = 'https://post-bridge.com?atp=clip-factory';
 
 const PostBridgeLink = ({ children }: { children: React.ReactNode }) => (
-  <a href={POSTBRIDGE_URL} target="_blank" rel="noreferrer" className="text-ink-4 underline hover:text-ink">
+  <a href={POSTBRIDGE_URL} target="_blank" rel="noreferrer" className="text-accent underline decoration-white/20 hover:text-ink">
     {children}
   </a>
 );
 
 const inputClass =
-  'w-full h-9 bg-card border border-line rounded-lg px-3 text-[13px] text-ink ' +
+  'w-full h-10 bg-raised border border-line rounded-lg px-3 text-[13px] text-ink shadow-field ' +
   'placeholder:text-ink-6 outline-none transition-colors ' +
-  'focus:border-ink-7 focus:ring-2 focus:ring-ink/10';
+  'focus:border-line-2';
 
 export function SettingsView({
   config,
@@ -127,7 +127,7 @@ export function SettingsView({
       />
 
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-2xl mx-auto p-8 space-y-8">
+        <div className="max-w-4xl mx-auto p-4 sm:p-8 space-y-5">
           {/* Project */}
           <Section
             title="Project"
@@ -219,7 +219,7 @@ export function SettingsView({
                 {accounts.map((a) => (
                   <label
                     key={a.id}
-                    className="flex items-center gap-2.5 px-3 py-2 rounded-lg border border-line bg-card cursor-pointer hover:border-line-2"
+                    className="flex items-center gap-2.5 px-3 py-2 rounded-lg border border-line bg-raised cursor-pointer hover:border-line-2"
                   >
                     <input type="checkbox" checked={selected.includes(a.id)} onChange={() => toggleAccount(a.id)} />
                     <span className="text-[13px] text-ink font-medium">{a.username}</span>
@@ -265,12 +265,12 @@ export function SettingsView({
               Test connection
             </Button>
             {saved && !saveError && (
-              <span className="text-[12px] text-emerald-600 flex items-center gap-1">
+              <span className="text-[12px] text-success flex items-center gap-1">
                 <Check size={13} /> Saved
               </span>
             )}
             {saveError && (
-              <span className="text-[12px] text-red-600 flex items-center gap-1">
+              <span className="text-[12px] text-danger flex items-center gap-1">
                 <X size={13} /> {saveError}
               </span>
             )}
@@ -283,8 +283,8 @@ export function SettingsView({
 
 export function DraftNote() {
   return (
-    <div className="flex items-start gap-2 p-3 rounded-lg bg-surface border border-line">
-      <Info size={13} className="text-ink-5 mt-0.5 shrink-0" />
+    <div className="flex items-start gap-2 p-3 rounded-lg bg-[#101010] border border-line">
+      <Info size={13} className="text-accent mt-0.5 shrink-0" />
       <p className="text-[12px] text-ink-4 leading-snug">
         <span className="font-medium text-ink-3">Drafts vs. scheduling:</span> drafts land in your
         post-bridge inbox to post by hand. You won't get analytics back on drafts — TikTok only
@@ -298,11 +298,11 @@ export function DraftNote() {
 function TestBadge({ ok, error }: { ok?: boolean; error?: string }) {
   if (ok === undefined) return null;
   return ok ? (
-    <p className="text-[11px] text-emerald-600 mt-1 flex items-center gap-1">
+    <p className="text-[11px] text-success mt-1 flex items-center gap-1">
       <Check size={11} /> Connected
     </p>
   ) : (
-    <p className="text-[11px] text-red-600 mt-1 flex items-center gap-1">
+    <p className="text-[11px] text-danger mt-1 flex items-center gap-1">
       <X size={11} /> {error || 'Failed'}
     </p>
   );
@@ -310,10 +310,10 @@ function TestBadge({ ok, error }: { ok?: boolean; error?: string }) {
 
 function Section({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
   return (
-    <section className="space-y-3">
+    <section className="space-y-4 rounded-xl border border-line bg-surface p-4 shadow-main fade-up">
       <div>
-        <h2 className="text-[13px] font-semibold text-ink uppercase tracking-widest">{title}</h2>
-        <p className="text-[12px] text-ink-5 mt-1">{description}</p>
+        <h2 className="text-[12px] font-semibold text-ink-3 uppercase tracking-[0.12em]">{title}</h2>
+        <p className="text-[12px] text-ink-5 mt-1 leading-relaxed">{description}</p>
       </div>
       {children}
     </section>
@@ -325,7 +325,7 @@ function Field({ label, hint, children }: { label: string; hint?: React.ReactNod
     <div>
       <label className="text-[11px] text-ink-5 mb-1 block">{label}</label>
       {children}
-      {hint && <p className="text-[11px] text-ink-6 mt-1">{hint}</p>}
+      {hint && <p className="text-[11px] text-ink-6 mt-1 leading-relaxed">{hint}</p>}
     </div>
   );
 }

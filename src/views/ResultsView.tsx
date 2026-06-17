@@ -54,7 +54,7 @@ export function ResultsView({ configured }: ResultsViewProps) {
             <button
               onClick={() => void refresh()}
               disabled={refreshing}
-              className="flex items-center gap-1.5 h-8 px-3 rounded-lg border border-line text-[12px] text-ink-4 hover:text-ink hover:border-line-2 disabled:opacity-50"
+              className="flex items-center gap-1.5 h-9 px-3 rounded-lg border border-line bg-control text-[12px] text-ink-4 shadow-main hover:text-ink hover:border-line-2 disabled:opacity-50"
             >
               <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
               {refreshing ? 'Syncing…' : 'Refresh'}
@@ -64,8 +64,8 @@ export function ResultsView({ configured }: ResultsViewProps) {
       />
       <div className="flex-1 overflow-y-auto">
         {results && results.length > 0 && (
-          <div className="px-8 py-4 border-b border-line bg-surface">
-            <div className="max-w-4xl mx-auto grid grid-cols-3 gap-6">
+          <div className="px-4 sm:px-8 py-4 border-b border-line bg-[#101010]">
+            <div className="max-w-5xl mx-auto grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-6">
               <Stat label="Total views" value={formatNumber(totalViews)} />
               <Stat label="Total likes" value={formatNumber(totalLikes)} />
               <Stat label="Posts tracked" value={String(results.length)} />
@@ -73,8 +73,8 @@ export function ResultsView({ configured }: ResultsViewProps) {
           </div>
         )}
 
-        <div className="p-8">
-          <div className="max-w-4xl mx-auto flex flex-col gap-3">
+        <div className="p-4 sm:p-8">
+          <div className="max-w-5xl mx-auto flex flex-col gap-3">
             {!configured ? (
               <Empty text="Add your post-bridge API key in Settings to see analytics." />
             ) : error ? (
@@ -95,8 +95,8 @@ export function ResultsView({ configured }: ResultsViewProps) {
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div>
-      <div className="text-[11px] text-ink-6 uppercase tracking-widest">{label}</div>
+    <div className="rounded-xl border border-line bg-surface px-4 py-3 shadow-main">
+      <div className="text-[10px] text-ink-6 uppercase tracking-[0.12em]">{label}</div>
       <div className="text-[22px] font-semibold text-ink leading-none mt-1">{value}</div>
     </div>
   );
@@ -104,15 +104,15 @@ function Stat({ label, value }: { label: string; value: string }) {
 
 function ResultCard({ result }: { result: PostResult }) {
   return (
-    <div className="bg-card border border-line rounded-xl p-4 flex gap-4">
-      <div className="shrink-0 w-20 aspect-[9/16] rounded-md overflow-hidden bg-raised">
+    <div className="bg-surface border border-line rounded-xl p-4 flex gap-4 shadow-main hover:border-line-2 transition-colors fade-up">
+      <div className="shrink-0 w-20 aspect-[9/16] rounded-lg overflow-hidden bg-raised border border-line">
         {result.coverImageUrl && (
           <img src={result.coverImageUrl} alt="" className="w-full h-full object-cover" />
         )}
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-2">
-          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded border border-line bg-raised uppercase tracking-wide text-ink-4">
+          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md border border-line bg-control uppercase tracking-wide text-ink-4">
             {result.platform || 'post'}
           </span>
           {result.lastSyncedAt && (
@@ -126,13 +126,13 @@ function ResultCard({ result }: { result: PostResult }) {
             {result.description}
           </h3>
         )}
-        <div className="flex items-center gap-4 text-[12px] text-ink-4">
+        <div className="flex items-center gap-4 text-[12px] text-ink-4 flex-wrap">
           <Metric icon={Eye} value={formatNumber(result.views)} />
           <Metric icon={Heart} value={formatNumber(result.likes)} />
           <Metric icon={MessageCircle} value={formatNumber(result.comments)} />
           <Metric icon={Share2} value={formatNumber(result.shares)} />
           {result.shareUrl && (
-            <a href={result.shareUrl} target="_blank" rel="noreferrer" className="text-ink-5 underline">
+            <a href={result.shareUrl} target="_blank" rel="noreferrer" className="text-accent underline decoration-white/20 hover:text-ink">
               view post
             </a>
           )}
@@ -160,5 +160,5 @@ function Loading() {
 }
 
 function Empty({ text }: { text: string }) {
-  return <div className="text-center py-16 text-[13px] text-ink-5 max-w-md mx-auto">{text}</div>;
+  return <div className="text-center py-16 text-[13px] text-ink-5 max-w-md mx-auto leading-relaxed">{text}</div>;
 }

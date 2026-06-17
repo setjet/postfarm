@@ -117,16 +117,16 @@ export function BulkScheduleModal({ slideshows, accounts, defaults, onClose, onD
   const busy = progress !== null && doneCount === null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={busy ? undefined : onClose}>
-      <div className="bg-card border border-line rounded-2xl w-full max-w-md max-h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 bg-black/55 backdrop-blur-sm flex items-center justify-center p-4" onClick={busy ? undefined : onClose}>
+      <div className="bg-surface border border-line rounded-2xl w-full max-w-md max-h-[92vh] flex flex-col shadow-main fade-up" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-line">
           <h2 className="text-[15px] font-semibold text-ink">Schedule {slideshows.length} slideshow{slideshows.length === 1 ? '' : 's'}</h2>
-          {!busy && <button onClick={onClose} className="text-ink-5 hover:text-ink"><X size={18} /></button>}
+          {!busy && <button onClick={onClose} className="w-8 h-8 rounded-lg text-ink-5 hover:text-ink hover:bg-white/[0.055] flex items-center justify-center"><X size={18} /></button>}
         </div>
 
         {doneCount !== null ? (
           <div className="px-5 py-8 text-center space-y-2">
-            <CheckCircle2 size={28} className="text-emerald-600 mx-auto" />
+            <CheckCircle2 size={28} className="text-success mx-auto" />
             <p className="text-[14px] font-medium text-ink">{doneCount} of {slideshows.length} {mode === 'schedule' ? 'scheduled' : 'saved as drafts'}</p>
             <p className="text-[12px] text-ink-5">
               {mode === 'schedule' ? 'post-bridge will publish them at their times.' : 'Find them in your post-bridge drafts.'}
@@ -135,7 +135,7 @@ export function BulkScheduleModal({ slideshows, accounts, defaults, onClose, onD
               href={mode === 'schedule' ? PB_SCHEDULED_URL : PB_DRAFTS_URL}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center justify-center gap-1.5 h-9 px-4 mt-2 rounded-lg bg-ink text-bg text-[13px] font-medium hover:opacity-90"
+              className="inline-flex items-center justify-center gap-1.5 h-9 px-4 mt-2 rounded-lg bg-ink text-bg text-[13px] font-medium shadow-main hover:opacity-90"
             >
               View on post-bridge <ExternalLink size={13} />
             </a>
@@ -150,7 +150,7 @@ export function BulkScheduleModal({ slideshows, accounts, defaults, onClose, onD
               ) : (
                 <div className="flex flex-col gap-1.5">
                   {accounts.map((a) => (
-                    <label key={a.id} className="flex items-center gap-2.5 px-3 py-2 rounded-lg border border-line cursor-pointer hover:border-line-2">
+                    <label key={a.id} className="flex items-center gap-2.5 px-3 py-2 rounded-lg border border-line bg-raised cursor-pointer hover:border-line-2">
                       <input type="checkbox" checked={selectedAccounts.includes(a.id)} onChange={() => toggleAccount(a.id)} disabled={busy} />
                       <span className="text-[13px] text-ink font-medium">{a.username}</span>
                       <span className="text-[11px] text-ink-5 uppercase">{a.platform}</span>
@@ -170,7 +170,7 @@ export function BulkScheduleModal({ slideshows, accounts, defaults, onClose, onD
             </div>
 
             {mode === 'schedule' && (
-              <div className="rounded-lg border border-line bg-surface p-3 space-y-3">
+              <div className="rounded-lg border border-line bg-[#101010] p-3 space-y-3">
                 <div>
                   <label className="text-[10px] text-ink-6 uppercase tracking-wider mb-1 block">Start at</label>
                   <input
@@ -178,7 +178,7 @@ export function BulkScheduleModal({ slideshows, accounts, defaults, onClose, onD
                     value={startLocal}
                     onChange={(e) => setStartLocal(e.target.value)}
                     disabled={busy}
-                    className="w-full h-9 bg-card border border-line rounded-lg px-3 text-[13px] text-ink outline-none focus:border-ink-7"
+                    className="w-full h-10 bg-raised border border-line rounded-lg px-3 text-[13px] text-ink outline-none focus:border-line-2"
                   />
                   {lastScheduledMs && (
                     <p className="text-[11px] text-ink-6 mt-1">
@@ -195,7 +195,7 @@ export function BulkScheduleModal({ slideshows, accounts, defaults, onClose, onD
                         onClick={() => { setHours(h); resetStartAfterLast(h); }}
                         disabled={busy}
                         className={`px-2.5 h-8 rounded-lg border text-[12px] font-medium transition-colors ${
-                          hours === h ? 'border-ink bg-ink text-bg' : 'border-line bg-card text-ink-5 hover:border-line-2'
+                          hours === h ? 'border-accent bg-accent text-bg' : 'border-line bg-raised text-ink-5 hover:border-line-2 hover:text-ink'
                         }`}
                       >
                         {h}h
@@ -211,12 +211,12 @@ export function BulkScheduleModal({ slideshows, accounts, defaults, onClose, onD
               </div>
             )}
 
-            {error && <p className="text-[12px] text-red-600">{error}</p>}
+            {error && <p className="text-[12px] text-danger">{error}</p>}
             {progress && <p className="text-[12px] text-ink-5 flex items-center gap-2"><Loader2 size={13} className="animate-spin" /> Uploading {progress.done} / {progress.total}…</p>}
           </div>
         )}
 
-        <div className="px-5 py-4 border-t border-line flex justify-end gap-2">
+        <div className="px-5 py-4 border-t border-line bg-[#101010] flex justify-end gap-2">
           {doneCount !== null ? (
             <Button variant="primary" onClick={onDone}>Done</Button>
           ) : (
