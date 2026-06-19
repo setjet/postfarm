@@ -42,6 +42,33 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
+function managedImageAssetId(slide: Slide): string | null {
+  if (slide.imageAssetId && !slide.imageAssetId.startsWith('bundled:')) return slide.imageAssetId;
+  const match = slide.imageUrl?.match(/^\/api\/library\/img\/([^/?#]+)/);
+  if (!match) return null;
+  try { return decodeURIComponent(match[1]); } catch { return match[1]; }
+}
+
+async function loadSlideImage(slide: Slide): Promise<{ image: HTMLImageElement; release: () => void }> {
+  if (slide.imageUnavailable) {
+    throw new Error('A Library background used by this draft was deleted. Choose another background before rendering.');
+  }
+  const assetId = managedImageAssetId(slide);
+  if (!assetId) return { image: await loadImage(slide.imageUrl || ''), release: () => {} };
+
+  const response = await fetch(`/api/library/img/${encodeURIComponent(assetId)}`, { cache: 'no-store' });
+  if (!response.ok) {
+    throw new Error('A Library background used by this draft is no longer available. Choose another background before rendering.');
+  }
+  const objectUrl = URL.createObjectURL(await response.blob());
+  try {
+    return { image: await loadImage(objectUrl), release: () => URL.revokeObjectURL(objectUrl) };
+  } catch (error) {
+    URL.revokeObjectURL(objectUrl);
+    throw error;
+  }
+}
+
 // Draw an image to cover the whole canvas (object-fit: cover).
 function drawCover(ctx: CanvasRenderingContext2D, img: HTMLImageElement) {
   const scale = Math.max(W / img.width, H / img.height);
@@ -61,12 +88,17 @@ function fillSlideBackground(ctx: CanvasRenderingContext2D, slide: Slide) {
 async function drawImageOrGradient(ctx: CanvasRenderingContext2D, slide: Slide, darken = 0.45) {
   if (slide.imageUrl) {
     try {
-      const img = await loadImage(slide.imageUrl);
-      drawCover(ctx, img);
-      ctx.fillStyle = `rgba(0,0,0,${darken})`;
-      ctx.fillRect(0, 0, W, H);
-      return;
-    } catch {
+      const loaded = await loadSlideImage(slide);
+      try {
+        drawCover(ctx, loaded.image);
+        ctx.fillStyle = `rgba(0,0,0,${darken})`;
+        ctx.fillRect(0, 0, W, H);
+        return;
+      } finally {
+        loaded.release();
+      }
+    } catch (error) {
+      if (slide.imageUnavailable || managedImageAssetId(slide)) throw error;
       // fall through to gradient
     }
   }
@@ -85,12 +117,17 @@ export async function renderSlide(slide: Slide): Promise<string> {
   if (slide.imageUrl) {
     // Image background (same-origin: bundled at /library/… or scraped via /api/…).
     try {
-      const img = await loadImage(slide.imageUrl);
-      drawCover(ctx, img);
-      // Darken so white text stays readable.
-      ctx.fillStyle = 'rgba(0,0,0,0.45)';
-      ctx.fillRect(0, 0, W, H);
-    } catch {
+      const loaded = await loadSlideImage(slide);
+      try {
+        drawCover(ctx, loaded.image);
+        // Darken so white text stays readable.
+        ctx.fillStyle = 'rgba(0,0,0,0.45)';
+        ctx.fillRect(0, 0, W, H);
+      } finally {
+        loaded.release();
+      }
+    } catch (error) {
+      if (slide.imageUnavailable || managedImageAssetId(slide)) throw error;
       ctx.fillStyle = slide.bgFrom || '#0f172a';
       ctx.fillRect(0, 0, W, H);
     }
@@ -124,6 +161,7 @@ export async function renderSlide(slide: Slide): Promise<string> {
   const maxWidth = W * (1 - 2 * pct(SIDE_PAD_PCT));
   const lines = wrap(ctx, slide.text || '', maxWidth);
   const blockH = lines.length * lineHeight;
+  if (blockH > H * 0.84) throw new Error('Quality Gate: slide text does not fit inside the renderer safe area.');
   const startY = (H - blockH) / 2; // vertically centered, matching the preview
   const x = W / 2;
 
@@ -182,6 +220,7 @@ async function renderNotesHookSlide(show: Slideshow): Promise<string> {
   ctx.lineJoin = 'round';
   const lines = wrap(ctx, text.toLowerCase(), maxWidth);
   const blockH = lines.length * lineHeight;
+  if (blockH > H * 0.72) throw new Error('Quality Gate: Notes hook text does not fit inside the renderer safe area.');
   const y = H * 0.58 - blockH / 2;
   for (let i = 0; i < lines.length; i++) {
     const yy = y + i * lineHeight;
@@ -284,6 +323,9 @@ async function renderNotesValueSlide(show: Slideshow): Promise<string> {
   ctx.fillRect(0, 0, W, H);
 
   const m = fitNotesMetrics(ctx, data);
+  if (measureNotes(ctx, data, m) > m.bottomY - m.topY) {
+    throw new Error('Quality Gate: the complete Notes date, heading, and numbered points do not fit on the slide.');
+  }
   const maxWidth = W - m.margin * 2;
   const date = data.noteDate || new Date().toLocaleString('en-US', {
     month: 'long',

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Eye, Heart, MessageCircle, Share2, Loader2, RefreshCw, Brain, Trash2 } from 'lucide-react';
-import type { LearningMemory, PostResult } from '../types';
-import { ViewHeader } from '../components/ViewHeader';
-import { Button } from '../components/Button';
-import { clearLearning, getLearning, getResults, rebuildLearning, syncResults } from '../lib/api';
+import {
+  ExternalLink, Eye, Heart, ImageOff, Loader2, MessageCircle,
+  RefreshCw, Share2,
+} from 'lucide-react';
+import type { PostResult } from '../types';
+import { getResults, syncResults } from '../lib/api';
 
 interface ResultsViewProps {
   configured: boolean;
@@ -15,153 +16,116 @@ function formatNumber(n: number) {
   return n.toString();
 }
 
+function formatDate(value: string | null, includeTime = false) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return includeTime
+    ? date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+    : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
 export function ResultsView({ configured }: ResultsViewProps) {
   const [results, setResults] = useState<PostResult[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [learning, setLearning] = useState<LearningMemory | null>(null);
-  const [learningBusy, setLearningBusy] = useState(false);
-  const [learningError, setLearningError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!configured) return;
     getResults()
       .then(setResults)
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
-    getLearning()
-      .then(setLearning)
-      .catch(() => setLearning(null));
+      .catch((caught) => setError(caught instanceof Error ? caught.message : String(caught)));
   }, [configured]);
 
   // Refresh pulls fresh metrics from the platforms (post-bridge sync) first,
   // which is also what backfills cover thumbnails once a post goes live.
   const refresh = useCallback(async () => {
-    if (!configured) return;
+    if (!configured || refreshing) return;
     setRefreshing(true);
     setError(null);
     try {
       setResults(await syncResults());
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setRefreshing(false);
     }
-  }, [configured]);
+  }, [configured, refreshing]);
 
-  const rebuild = useCallback(async () => {
-    if (!configured) return;
-    setLearningBusy(true);
-    setLearningError(null);
-    try {
-      setLearning(await rebuildLearning());
-    } catch (e) {
-      setLearningError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLearningBusy(false);
-    }
-  }, [configured]);
-
-  const clear = useCallback(async () => {
-    if (!window.confirm('Clear saved learning memory for this project?')) return;
-    setLearningBusy(true);
-    setLearningError(null);
-    try {
-      await clearLearning();
-      setLearning(null);
-    } catch (e) {
-      setLearningError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLearningBusy(false);
-    }
-  }, []);
-
-  const totalViews = results?.reduce((s, r) => s + r.views, 0) ?? 0;
-  const totalLikes = results?.reduce((s, r) => s + r.likes, 0) ?? 0;
+  const totalViews = results?.reduce((sum, result) => sum + result.views, 0) ?? 0;
+  const totalLikes = results?.reduce((sum, result) => sum + result.likes, 0) ?? 0;
+  const latestSync = results?.reduce<string | null>((latest, result) => {
+    if (!result.lastSyncedAt || Number.isNaN(new Date(result.lastSyncedAt).getTime())) return latest;
+    if (!latest || new Date(result.lastSyncedAt) > new Date(latest)) return result.lastSyncedAt;
+    return latest;
+  }, null) ?? null;
+  const hasResults = !!results?.length;
 
   return (
     <>
-      <ViewHeader
-        title="Results"
-        subtitle="Live analytics from post-bridge for everything you've published."
-        right={
-          configured && (
+      <header className="shrink-0 border-b border-line px-4 py-4 sm:px-8">
+        <div className="mx-auto flex w-full max-w-6xl flex-col items-start justify-between gap-3 sm:flex-row sm:items-center sm:gap-4">
+          <div className="min-w-0">
+            <h1 className="text-[24px] font-semibold leading-tight text-ink sm:text-[26px]">Results</h1>
+            <p className="mt-1 text-[12px] leading-relaxed text-ink-5">Live performance analytics for your published posts.</p>
+          </div>
+          {configured && <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
+            {latestSync && <span className="hidden text-[10px] text-ink-6 lg:block">Last synced {formatDate(latestSync, true)}</span>}
             <button
+              type="button"
               onClick={() => void refresh()}
               disabled={refreshing}
-              className="flex items-center gap-1.5 h-9 px-3 rounded-lg border border-line bg-control text-[12px] text-ink-4 shadow-main hover:text-ink hover:border-line-2 disabled:opacity-50"
+              aria-busy={refreshing}
+              aria-live="polite"
+              className="flex h-9 w-[100px] items-center justify-center gap-1.5 rounded-lg border border-line bg-control px-3 text-[12px] text-ink-4 shadow-main hover:border-line-2 hover:text-ink disabled:cursor-wait disabled:opacity-60"
             >
               <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
               {refreshing ? 'Syncing…' : 'Refresh'}
             </button>
-          )
-        }
-      />
-      <div className="flex-1 overflow-y-auto">
-        {results && results.length > 0 && (
-          <div className="px-4 sm:px-8 py-4 border-b border-line bg-[#101010]">
-            <div className="max-w-5xl mx-auto grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-6">
-              <Stat label="Total views" value={formatNumber(totalViews)} />
-              <Stat label="Total likes" value={formatNumber(totalLikes)} />
-              <Stat label="Posts tracked" value={String(results.length)} />
-            </div>
-          </div>
-        )}
-
-        {configured && (
-          <div className="px-4 sm:px-8 py-4 border-b border-line">
-            <div className="max-w-5xl mx-auto">
-              <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
-                <div>
-                  <h2 className="text-[13px] font-semibold text-ink flex items-center gap-2">
-                    <Brain size={15} className="text-accent" /> Learning memory
-                  </h2>
-                  <p className="text-[12px] text-ink-5 mt-1">
-                    Summarizes what performs best so future generations can use it.
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  {learning && (
-                    <Button variant="danger-ghost" icon={<Trash2 size={13} />} onClick={clear} disabled={learningBusy}>
-                      Clear
-                    </Button>
-                  )}
-                  <Button
-                    variant="secondary"
-                    icon={learningBusy ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
-                    onClick={rebuild}
-                    disabled={learningBusy}
-                  >
-                    {learningBusy ? 'Rebuilding...' : 'Rebuild insights'}
-                  </Button>
-                </div>
-              </div>
-              {learningError && <p className="text-[12px] text-danger mb-3">{learningError}</p>}
-              {learning ? (
-                <LearningBlocks memory={learning} />
-              ) : (
-                <div className="rounded-xl border border-line bg-surface p-4 text-[12px] text-ink-5">
-                  No learning memory saved yet. Rebuild insights after analytics are available.
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        <div className="p-4 sm:p-8">
-          <div className="max-w-5xl mx-auto flex flex-col gap-3">
-            {!configured ? (
-              <Empty text="Add your post-bridge API key in Settings to see analytics." />
-            ) : error ? (
-              <Empty text={error} />
-            ) : results === null ? (
-              <Loading />
-            ) : results.length === 0 ? (
-              <Empty text="No analytics yet. Once your posts go live, post-bridge syncs their performance here." />
-            ) : (
-              results.map((r) => <ResultCard key={r.id} result={r} />)
-            )}
-          </div>
+          </div>}
         </div>
+      </header>
+
+      <div className="flex-1 overflow-y-auto">
+        <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-8 sm:py-8">
+          {error && results !== null && (
+            <div role="alert" className="mb-5 border-l-2 border-danger bg-red-500/[0.06] px-3 py-2 text-[12px] text-danger">
+              Analytics could not be refreshed. Showing the last loaded data. {error}
+            </div>
+          )}
+
+          {!configured ? (
+            <Empty text="Add your post-bridge API key in Settings to see published-post analytics." />
+          ) : results === null ? (
+            error ? <Empty text={error} error /> : <Loading />
+          ) : !hasResults ? (
+            <Empty text="No analytics yet. Once published posts are synced from Postbridge, their performance will appear here." />
+          ) : (
+            <>
+              <section aria-labelledby="performance-overview">
+                <h2 id="performance-overview" className="text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-5">Performance overview</h2>
+                <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-4 border-y border-line py-4 sm:grid-cols-3 sm:gap-x-10">
+                  <Stat label="Total views" value={formatNumber(totalViews)} />
+                  <Stat label="Total likes" value={formatNumber(totalLikes)} />
+                  <Stat label="Posts tracked" value={String(results.length)} />
+                </dl>
+              </section>
+
+              <section className="mt-8" aria-labelledby="published-posts">
+                <div className="mb-3 flex items-end justify-between gap-4">
+                  <div>
+                    <h2 id="published-posts" className="text-[16px] font-semibold text-ink">Published posts</h2>
+                    <p className="mt-1 text-[11px] text-ink-6">{results.length} tracked post{results.length === 1 ? '' : 's'}</p>
+                  </div>
+                </div>
+                <div className="divide-y divide-line border-y border-line">
+                  {results.map((result) => <ResultRow key={result.id} result={result} />)}
+                </div>
+              </section>
+
+            </>
+          )}
+        </main>
       </div>
     </>
   );
@@ -169,109 +133,69 @@ export function ResultsView({ configured }: ResultsViewProps) {
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-line bg-surface px-4 py-3 shadow-main">
-      <div className="text-[10px] text-ink-6 uppercase tracking-[0.12em]">{label}</div>
-      <div className="text-[22px] font-semibold text-ink leading-none mt-1">{value}</div>
+    <div>
+      <dt className="text-[10px] uppercase tracking-[0.12em] text-ink-6">{label}</dt>
+      <dd className="mt-1 text-[24px] font-semibold leading-none tabular-nums text-ink">{value}</dd>
     </div>
   );
 }
 
-function LearningBlocks({ memory }: { memory: LearningMemory }) {
+function ResultRow({ result }: { result: PostResult }) {
+  const [imageFailed, setImageFailed] = useState(false);
+  const synced = formatDate(result.lastSyncedAt);
   return (
-    <div className="rounded-xl border border-line bg-surface p-4 shadow-main">
-      <div className="text-[12px] text-ink-4 leading-relaxed mb-3">{memory.summary}</div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <InsightList title="What is working" items={memory.working} />
-        <InsightList title="What to avoid" items={memory.avoid} />
-        <InsightList title="Best CTA keywords" items={memory.bestCtas} />
-        <InsightList title="Best hook formulas" items={memory.bestHookFormulas} />
-        <InsightList title="Recommended next posts" items={memory.recommendedNextPosts} />
-        <InsightList title="Suggested buckets" items={memory.suggestedBuckets} />
-      </div>
-      <p className="text-[10px] text-ink-6 mt-3">
-        Built from {memory.sourcePostCount} post{memory.sourcePostCount === 1 ? '' : 's'}
-        {memory.generatedAt ? ` on ${new Date(memory.generatedAt).toLocaleDateString()}` : ''}.
-      </p>
-    </div>
-  );
-}
-
-function InsightList({ title, items }: { title: string; items: string[] }) {
-  return (
-    <div className="rounded-lg border border-line bg-[#101010] p-3">
-      <div className="text-[10px] text-ink-6 uppercase tracking-[0.12em] mb-2">{title}</div>
-      {items?.length ? (
-        <ul className="space-y-1.5">
-          {items.slice(0, 5).map((item, i) => (
-            <li key={`${item}-${i}`} className="text-[12px] text-ink-4 leading-snug">
-              {item}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="text-[12px] text-ink-6">Not enough signal yet.</p>
-      )}
-    </div>
-  );
-}
-
-function ResultCard({ result }: { result: PostResult }) {
-  return (
-    <div className="bg-surface border border-line rounded-xl p-4 flex gap-4 shadow-main hover:border-line-2 transition-colors fade-up">
-      <div className="shrink-0 w-20 aspect-[9/16] rounded-lg overflow-hidden bg-raised border border-line">
-        {result.coverImageUrl && (
-          <img src={result.coverImageUrl} alt="" className="w-full h-full object-cover" />
+    <article className="grid grid-cols-[64px_minmax(0,1fr)] gap-x-3 gap-y-3 py-4 lg:grid-cols-[64px_minmax(12rem,1fr)_repeat(4,minmax(52px,72px))_auto] lg:items-center lg:gap-x-4">
+      <div className="h-[112px] w-16 shrink-0 overflow-hidden rounded-lg bg-raised">
+        {result.coverImageUrl && !imageFailed ? (
+          <img src={result.coverImageUrl} alt="" width={64} height={112} loading="lazy" decoding="async" className="h-full w-full object-cover" onError={() => setImageFailed(true)} />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center text-ink-7" aria-label="Thumbnail unavailable"><ImageOff size={18} /></div>
         )}
       </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-2">
-          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md border border-line bg-control uppercase tracking-wide text-ink-4">
-            {result.platform || 'post'}
-          </span>
-          {result.lastSyncedAt && (
-            <span className="text-[11px] text-ink-6">
-              synced {new Date(result.lastSyncedAt).toLocaleDateString()}
-            </span>
-          )}
+
+      <div className="min-w-0 self-start pt-0.5 lg:self-center lg:pt-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded-md border border-line bg-control px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-ink-4">{result.platform || 'post'}</span>
+          {synced && <span className="text-[10px] text-ink-6">Synced {synced}</span>}
         </div>
-        {result.description && (
-          <h3 className="text-[14px] font-semibold text-ink leading-snug mb-2 line-clamp-2">
-            {result.description}
-          </h3>
-        )}
-        <div className="flex items-center gap-4 text-[12px] text-ink-4 flex-wrap">
-          <Metric icon={Eye} value={formatNumber(result.views)} />
-          <Metric icon={Heart} value={formatNumber(result.likes)} />
-          <Metric icon={MessageCircle} value={formatNumber(result.comments)} />
-          <Metric icon={Share2} value={formatNumber(result.shares)} />
-          {result.shareUrl && (
-            <a href={result.shareUrl} target="_blank" rel="noreferrer" className="text-accent underline decoration-white/20 hover:text-ink">
-              view post
-            </a>
-          )}
-        </div>
+        <p className={`mt-2 line-clamp-2 break-words text-[12px] leading-relaxed ${result.description ? 'text-ink-3' : 'text-ink-6'}`}>{result.description || 'No caption available.'}</p>
       </div>
-    </div>
+
+      <div className="col-span-2 grid grid-cols-4 gap-2 lg:contents">
+        <Metric icon={Eye} label="Views" value={formatNumber(result.views)} />
+        <Metric icon={Heart} label="Likes" value={formatNumber(result.likes)} />
+        <Metric icon={MessageCircle} label="Comments" value={formatNumber(result.comments)} />
+        <Metric icon={Share2} label="Shares" value={formatNumber(result.shares)} />
+      </div>
+
+      <div className="col-span-2 min-w-0 lg:col-span-1 lg:text-right">
+        {result.shareUrl ? (
+          <a href={result.shareUrl} target="_blank" rel="noreferrer" className="inline-flex min-h-8 items-center gap-1.5 rounded-lg px-2 text-[11px] font-medium text-accent hover:bg-white/5 hover:text-ink">
+            View post <ExternalLink size={11} />
+          </a>
+        ) : <span className="text-[10px] text-ink-7">No link</span>}
+      </div>
+    </article>
   );
 }
 
-function Metric({ icon: Icon, value }: { icon: typeof Eye; value: string }) {
+function Metric({ icon: Icon, label, value }: { icon: typeof Eye; label: string; value: string }) {
   return (
-    <span className="flex items-center gap-1">
-      <Icon size={11} className="text-ink-6" />
-      {value}
-    </span>
+    <div className="min-w-0">
+      <div className="flex items-center gap-1 text-[9px] uppercase tracking-wide text-ink-6"><Icon size={11} /><span className="sr-only sm:not-sr-only sm:truncate">{label}</span></div>
+      <div className="mt-1 text-[13px] font-semibold tabular-nums text-ink-3">{value}</div>
+    </div>
   );
 }
 
 function Loading() {
   return (
-    <div className="flex items-center justify-center py-16 text-ink-5 text-[13px] gap-2">
+    <div role="status" aria-live="polite" className="flex items-center justify-center gap-2 py-20 text-[13px] text-ink-5">
       <Loader2 size={14} className="animate-spin" /> Loading analytics…
     </div>
   );
 }
 
-function Empty({ text }: { text: string }) {
-  return <div className="text-center py-16 text-[13px] text-ink-5 max-w-md mx-auto leading-relaxed">{text}</div>;
+function Empty({ text, error = false }: { text: string; error?: boolean }) {
+  return <div role={error ? 'alert' : 'status'} className={`mx-auto max-w-md py-20 text-center text-[13px] leading-relaxed ${error ? 'text-danger' : 'text-ink-5'}`}>{text}</div>;
 }

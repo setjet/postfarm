@@ -1,22 +1,26 @@
-import { useEffect, useState, useCallback } from 'react';
+import { lazy, Suspense, useEffect, useState, useCallback, useSyncExternalStore } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { ScheduleModal } from './components/ScheduleModal';
 import { BulkScheduleModal } from './components/BulkScheduleModal';
 import { GenerateModal } from './components/GenerateModal';
 import { GenerationLoadingCard } from './components/GenerationLoadingCard';
 import { SlideshowEditorModal } from './components/SlideshowEditorModal';
+import { ContentPlannerModal } from './components/ContentPlannerModal';
 import { QueueView } from './views/QueueView';
-import { TrendsView } from './views/TrendsView';
-import { LibraryView } from './views/LibraryView';
-import { ScheduleView } from './views/ScheduleView';
-import { ResultsView } from './views/ResultsView';
-import { BrainView } from './views/BrainView';
-import { SettingsView } from './views/SettingsView';
 import { renderSlideshow } from './lib/render';
 import { captionWithHashtags } from './lib/hashtags';
+import { PlannerJobController } from './lib/plannerJobController';
 import * as api from './lib/api';
 import type { GenerateOptions } from './lib/api';
 import type { AppConfig, Project, Slideshow, Slide, SocialAccount, BrainState, ViewKey, NotesData } from './types';
+
+const TrendsView = lazy(() => import('./views/TrendsView').then((module) => ({ default: module.TrendsView })));
+const LibraryView = lazy(() => import('./views/LibraryView').then((module) => ({ default: module.LibraryView })));
+const ScheduleView = lazy(() => import('./views/ScheduleView').then((module) => ({ default: module.ScheduleView })));
+const ResultsView = lazy(() => import('./views/ResultsView').then((module) => ({ default: module.ResultsView })));
+const LearningView = lazy(() => import('./views/LearningView').then((module) => ({ default: module.LearningView })));
+const BrainView = lazy(() => import('./views/BrainView').then((module) => ({ default: module.BrainView })));
+const SettingsView = lazy(() => import('./views/SettingsView').then((module) => ({ default: module.SettingsView })));
 
 export default function App() {
   const [config, setConfig] = useState<AppConfig | null>(null);
@@ -26,10 +30,27 @@ export default function App() {
   const [generating, setGenerating] = useState(false);
   const [scheduling, setScheduling] = useState<Slideshow | null>(null);
   const [editing, setEditing] = useState<Slideshow | null>(null);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [selectedIdCandidates, setSelectedIds] = useState<string[]>([]);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [generateOpen, setGenerateOpen] = useState(false);
+  const [plannerOpen, setPlannerOpen] = useState(false);
+  const [plannerPlanId, setPlannerPlanId] = useState<string | null>(null);
+  const [plannerJobs] = useState(() => new PlannerJobController({
+    generateSlot: api.generateContentPlanSlot,
+    getPlan: api.getContentPlan,
+    renderSlot: async (slot) => slot.format === 'video' || !slot.post ? undefined : renderSlideshow(slot.post),
+    scheduleSlot: (plan, slot, slides) => api.scheduleContentPlanSlot(plan.id, slot.id, {
+      slides,
+      videoId: plan.config.videoId || undefined,
+      duration: 12,
+      textPosition: 'center',
+      watermark: true,
+    }),
+  }));
+  const plannerJob = useSyncExternalStore(plannerJobs.subscribe, plannerJobs.getSnapshot, plannerJobs.getSnapshot);
   const [generationRun, setGenerationRun] = useState<{ count: number; options: GenerateOptions } | null>(null);
+  const [failedGeneration, setFailedGeneration] = useState<{ count: number; options: GenerateOptions } | null>(null);
+  const [generatePreset, setGeneratePreset] = useState<GenerateOptions | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const activeAiProvider = config?.aiProvider || 'openrouter';
@@ -39,6 +60,7 @@ export default function App() {
   const activeProject: Project | undefined = config?.projects.find(
     (p) => p.id === config.activeProjectId
   ) ?? config?.projects[0];
+  const selectedIds = selectedIdCandidates.filter((id) => queue.some((show) => show.id === id));
 
   const loadAccounts = useCallback(async () => {
     try {
@@ -63,17 +85,30 @@ export default function App() {
     })();
   }, [loadAccounts]);
 
+  useEffect(() => {
+    const refreshLibraryReferences = () => {
+      void api.getQueue().then(setQueue).catch(() => {});
+      void api.getConfig().then(setConfig).catch(() => {});
+    };
+    window.addEventListener('slidesmith:library-changed', refreshLibraryReferences);
+    return () => window.removeEventListener('slidesmith:library-changed', refreshLibraryReferences);
+  }, []);
+
   const generate = async (count: number, options: GenerateOptions = {}) => {
     setError(null);
+    setGeneratePreset(null);
     setGenerationRun({ count, options });
     setGenerating(true);
     setGenerateOpen(false);
     try {
       await api.generate(count, options);
       setQueue(await api.getQueue());
+      setFailedGeneration(null);
       setGenerateOpen(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      setFailedGeneration({ count, options });
+      setGenerateOpen(true);
     } finally {
       setGenerating(false);
       setGenerationRun(null);
@@ -97,13 +132,28 @@ export default function App() {
     setQueue(await api.removeFromQueue(id));
   };
 
-  // Keep the multi-select in sync as queue items come and go.
-  useEffect(() => {
-    setSelectedIds((prev) => prev.filter((id) => queue.some((s) => s.id === id)));
-  }, [queue]);
-
   const toggleSelect = (id: string) =>
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+
+  const openGenerate = () => {
+    setError(null);
+    setFailedGeneration(null);
+    setGeneratePreset(null);
+    setGenerateOpen(true);
+  };
+
+  const openLearningIdea = useCallback((topic: string) => {
+    setError(null);
+    setFailedGeneration(null);
+    setGeneratePreset({ topicMode: 'custom', topic });
+    setGenerateOpen(true);
+  }, []);
+
+  const closeGenerate = () => {
+    setFailedGeneration(null);
+    setGeneratePreset(null);
+    setGenerateOpen(false);
+  };
 
   const bulkDone = async () => {
     setBulkOpen(false);
@@ -134,6 +184,14 @@ export default function App() {
     }
   };
 
+  const checkQueuedQuality = async (id: string) => {
+    setQueue(await api.checkQueueQuality(id));
+  };
+
+  const fixQueuedQuality = async (id: string) => {
+    setQueue(await api.fixQueueQuality(id));
+  };
+
   const confirmSchedule = async (opts: {
     format: 'carousel' | 'video';
     socialAccounts: number[];
@@ -143,6 +201,8 @@ export default function App() {
     duration?: number;
     textPosition?: 'center' | 'top';
     watermark?: boolean;
+    timezone?: string;
+    warningsAcknowledged?: boolean;
   }) => {
     if (!scheduling) return;
     const scheduledId = scheduling.id;
@@ -159,6 +219,8 @@ export default function App() {
         duration: opts.duration ?? 12,
         textPosition: opts.textPosition ?? 'center',
         watermark: opts.watermark ?? true,
+        timezone: opts.timezone,
+        warningsAcknowledged: opts.warningsAcknowledged,
       });
     } else {
       const slides = await renderSlideshow(scheduling);
@@ -169,6 +231,8 @@ export default function App() {
         socialAccounts: opts.socialAccounts,
         scheduledAt: opts.scheduledAt,
         mode: opts.mode,
+        timezone: opts.timezone,
+        warningsAcknowledged: opts.warningsAcknowledged,
       });
     }
     // Drop the now-scheduled slideshow from the queue immediately (optimistic),
@@ -256,6 +320,11 @@ export default function App() {
         activeProjectId={config.activeProjectId}
         onSwitchProject={switchProject}
         onNewProject={newProject}
+        plannerJob={plannerJob}
+        onOpenPlannerJob={() => {
+          setPlannerPlanId(plannerJob.planId);
+          setPlannerOpen(true);
+        }}
       />
       <main className="flex-1 h-full overflow-hidden flex flex-col app-main">
         {error && activeView !== 'settings' && (
@@ -269,7 +338,7 @@ export default function App() {
             slideshows={queue}
             generating={generating}
             canGenerate={hasActiveAiKey}
-            onGenerate={() => setGenerateOpen(true)}
+            onGenerate={openGenerate}
             selectedIds={selectedIds}
             onApprove={(id) => setScheduling(queue.find((s) => s.id === id) || null)}
             onReject={reject}
@@ -279,31 +348,46 @@ export default function App() {
             onSelectAll={() => setSelectedIds(queue.map((s) => s.id))}
             onClearSelection={() => setSelectedIds([])}
             onBulkSchedule={() => setBulkOpen(true)}
+            onQuality={checkQueuedQuality}
+            onSafeFix={fixQueuedQuality}
           />
         )}
-        {activeView === 'trends' && (
-          <TrendsView
-            hasApify={hasApify}
-            canGenerate={hasActiveAiKey}
-            generating={generating}
-            onGenerateFromTrends={generateFromTrends}
-          />
-        )}
-        {activeView === 'library' && <LibraryView hasApify={hasApify} />}
-        {activeView === 'schedule' && <ScheduleView configured={hasPostbridge} />}
-        {activeView === 'results' && <ResultsView configured={hasPostbridge} />}
-        {activeView === 'brain' && <BrainView brain={activeProject.brain} onChange={saveBrain} />}
-        {activeView === 'settings' && (
-          <SettingsView
-            config={config}
-            project={activeProject}
-            accounts={accounts}
-            canDelete={config.projects.length > 1}
-            onSave={saveSettings}
-            onDeleteProject={() => removeProject(activeProject.id)}
-            onReloadAccounts={loadAccounts}
-          />
-        )}
+        <Suspense fallback={<ViewLoading />}>
+          {activeView === 'trends' && (
+            <TrendsView
+              hasApify={hasApify}
+              canGenerate={hasActiveAiKey}
+              generating={generating}
+              onGenerateFromTrends={generateFromTrends}
+            />
+          )}
+          {activeView === 'library' && <LibraryView hasApify={hasApify} />}
+          {activeView === 'schedule' && (
+            <ScheduleView
+              configured={hasPostbridge}
+              accounts={accounts}
+              onPlanContent={() => {
+                setPlannerPlanId(plannerJob.status === 'running' ? plannerJob.planId : null);
+                setPlannerOpen(true);
+              }}
+            />
+          )}
+          {activeView === 'results' && <ResultsView configured={hasPostbridge} />}
+          {activeView === 'learning' && <LearningView key={activeProject.id} configured={hasPostbridge} onUseIdea={openLearningIdea} />}
+          {activeView === 'brain' && <BrainView brain={activeProject.brain} onChange={saveBrain} />}
+          {activeView === 'settings' && (
+            <SettingsView
+              key={activeProject.id}
+              config={config}
+              project={activeProject}
+              accounts={accounts}
+              canDelete={config.projects.length > 1}
+              onSave={saveSettings}
+              onDeleteProject={() => removeProject(activeProject.id)}
+              onReloadAccounts={loadAccounts}
+            />
+          )}
+        </Suspense>
       </main>
 
       {scheduling && (
@@ -343,9 +427,11 @@ export default function App() {
       {generateOpen && (
         <GenerateModal
           defaultPacks={activeProject.imagePacks}
+          initialCount={failedGeneration?.count}
+          initialOptions={failedGeneration?.options ?? generatePreset ?? undefined}
           generating={generating}
           error={error}
-          onClose={() => setGenerateOpen(false)}
+          onClose={closeGenerate}
           onGenerate={generate}
         />
       )}
@@ -353,7 +439,23 @@ export default function App() {
       {generating && generationRun && (
         <GenerationLoadingCard count={generationRun.count} options={generationRun.options} />
       )}
+
+      {plannerOpen && (
+        <ContentPlannerModal
+          accounts={accounts}
+          onClose={() => setPlannerOpen(false)}
+          onScheduled={() => setActiveView('schedule')}
+          initialPlanId={plannerPlanId}
+          job={plannerJob}
+          onGenerate={(plan, slots) => plannerJobs.startGeneration(plan, slots)}
+          onSchedule={(plan, slots) => plannerJobs.startScheduling(plan, slots)}
+        />
+      )}
     </div>
   );
+}
+
+function ViewLoading() {
+  return <div role="status" aria-live="polite" className="flex flex-1 items-center justify-center text-[12px] text-ink-6">Loading view…</div>;
 }
 

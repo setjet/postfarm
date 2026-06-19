@@ -227,13 +227,25 @@ export function LibraryView({ hasApify }: LibraryViewProps) {
   };
 
   const removeImage = async (id: string) => {
-    setImages(await deleteLibraryImage(id));
-    setPreview((current) => (current?.id === id ? null : current));
+    setError(null);
+    try {
+      setImages(await deleteLibraryImage(id));
+      setPreview((current) => (current?.id === id ? null : current));
+      window.dispatchEvent(new Event('slidesmith:library-changed'));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
   };
 
   const removeVideo = async (id: string) => {
-    setVideos(await deleteVideo(id));
-    setVideoPreview((current) => (current?.id === id ? null : current));
+    setVideoError(null);
+    try {
+      setVideos(await deleteVideo(id));
+      setVideoPreview((current) => (current?.id === id ? null : current));
+      window.dispatchEvent(new Event('slidesmith:library-changed'));
+    } catch (e) {
+      setVideoError(e instanceof Error ? e.message : String(e));
+    }
   };
 
   const moveAsset = async (id: string, folderId: string, type: 'image' | 'video') => {

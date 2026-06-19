@@ -6,6 +6,7 @@ import { SlidePreview } from '../components/SlidePreview';
 import { Button } from '../components/Button';
 import { IconButton } from '../components/IconButton';
 import { normalizeHashtags } from '../lib/hashtags';
+import { QualityReport } from '../components/QualityReport';
 
 interface QueueViewProps {
   slideshows: Slideshow[];
@@ -21,6 +22,8 @@ interface QueueViewProps {
   onSelectAll: () => void;
   onClearSelection: () => void;
   onBulkSchedule: () => void;
+  onQuality: (id: string) => Promise<void> | void;
+  onSafeFix: (id: string) => Promise<void> | void;
 }
 
 export function QueueView({
@@ -37,6 +40,8 @@ export function QueueView({
   onSelectAll,
   onClearSelection,
   onBulkSchedule,
+  onQuality,
+  onSafeFix,
 }: QueueViewProps) {
   const selectedCount = selectedIds.length;
   return (
@@ -116,6 +121,8 @@ export function QueueView({
                   const note = window.prompt('Optional rewrite note', s.qualityFeedback || 'Make this sharper and less generic.');
                   if (note !== null) onRewrite(s.id, note);
                 }}
+                onQuality={() => onQuality(s.id)}
+                onSafeFix={() => onSafeFix(s.id)}
               />
             ))}
           </div>
@@ -133,6 +140,8 @@ interface CardProps {
   onReject: () => void;
   onEdit: () => void;
   onRewrite: () => void;
+  onQuality: () => Promise<void> | void;
+  onSafeFix: () => Promise<void> | void;
 }
 
 function scoreLabel(slideshow: Slideshow) {
@@ -151,7 +160,7 @@ function scoreLabel(slideshow: Slideshow) {
   return { label, className, score };
 }
 
-function SlideshowCard({ slideshow, selected, onToggleSelect, onApprove, onReject, onEdit, onRewrite }: CardProps) {
+function SlideshowCard({ slideshow, selected, onToggleSelect, onApprove, onReject, onEdit, onRewrite, onQuality, onSafeFix }: CardProps) {
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const quality = scoreLabel(slideshow);
   const displayHashtags = normalizeHashtags(slideshow.hashtags);
@@ -198,7 +207,9 @@ function SlideshowCard({ slideshow, selected, onToggleSelect, onApprove, onRejec
           ))}
         </div>
 
-        {quality && (
+        <QualityReport report={slideshow.qualityReport} onRecheck={onQuality} onFix={onSafeFix} />
+
+        {quality && !slideshow.qualityReport && (
           <div className="mt-3">
             <button
               type="button"
@@ -234,6 +245,8 @@ function SlideshowCard({ slideshow, selected, onToggleSelect, onApprove, onRejec
             icon={<Check size={13} />}
             onClick={onApprove}
             fullWidth
+            disabled={slideshow.qualityReport?.status === 'blocked'}
+            title={slideshow.qualityReport?.status === 'blocked' ? 'Resolve blocking Quality Gate findings first.' : undefined}
           >
             Approve
           </Button>

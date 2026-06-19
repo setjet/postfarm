@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { LayoutGrid, CalendarClock, LineChart, Brain, Settings, ChevronsUpDown, Plus, Check, Images, PanelLeftClose, PanelLeftOpen, TrendingUp } from 'lucide-react';
+import { LayoutGrid, CalendarClock, LineChart, Brain, Settings, ChevronsUpDown, Plus, Check, Images, Lightbulb, PanelLeftClose, PanelLeftOpen, TrendingUp, Sparkles } from 'lucide-react';
 import type { ViewKey, Project } from '../types';
+import type { PlannerJobState } from '../lib/plannerJobController';
 
 interface SidebarProps {
   activeView: ViewKey;
@@ -11,6 +12,8 @@ interface SidebarProps {
   activeProjectId: string;
   onSwitchProject: (id: string) => void;
   onNewProject: () => void;
+  plannerJob: PlannerJobState;
+  onOpenPlannerJob: () => void;
 }
 
 const nav: { key: ViewKey; label: string; icon: typeof LayoutGrid; badge?: 'queue' | 'scheduled' }[] = [
@@ -19,6 +22,7 @@ const nav: { key: ViewKey; label: string; icon: typeof LayoutGrid; badge?: 'queu
   { key: 'library', label: 'Library', icon: Images },
   { key: 'schedule', label: 'Schedule', icon: CalendarClock, badge: 'scheduled' },
   { key: 'results', label: 'Results', icon: LineChart },
+  { key: 'learning', label: 'Learning', icon: Lightbulb },
   { key: 'brain', label: 'Brain', icon: Brain },
 ];
 
@@ -35,6 +39,8 @@ export function Sidebar({
   activeProjectId,
   onSwitchProject,
   onNewProject,
+  plannerJob,
+  onOpenPlannerJob,
 }: SidebarProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
@@ -147,6 +153,23 @@ export function Sidebar({
 
       {/* Bottom */}
       <div className="border-t border-line p-2">
+        {plannerJob.status !== 'idle' && (
+          <button
+            type="button"
+            onClick={onOpenPlannerJob}
+            title={plannerJob.status === 'running' ? `${plannerJob.stage === 'generation' ? 'Generating' : 'Scheduling'} ${plannerJob.done} of ${plannerJob.total}` : 'Open completed content plan'}
+            className={`mb-1.5 flex min-h-9 w-full items-center gap-2.5 rounded-lg border border-accent/20 bg-sky-500/[0.08] text-left text-accent hover:bg-sky-500/[0.12] ${collapsed ? 'justify-center px-0' : 'px-2.5 py-2'}`}
+          >
+            <Sparkles size={14} className={`shrink-0 ${plannerJob.status === 'running' ? 'animate-pulse' : ''}`} />
+            <span role="status" aria-live="polite" className={`${collapsed ? 'hidden' : 'block'} min-w-0 text-[10px] leading-relaxed`}>
+              {plannerJob.status === 'running' ? (
+                <><strong className="font-semibold">{plannerJob.stage === 'generation' ? 'Generating' : 'Scheduling'} {plannerJob.done} of {plannerJob.total}</strong>{plannerJob.failed > 0 ? ` · ${plannerJob.failed} failed` : ''}</>
+              ) : (
+                <><strong className="font-semibold">Plan complete</strong><br />{plannerJob.summary?.ready || 0} ready · {plannerJob.summary?.warnings || 0} warning · {plannerJob.summary?.failed || 0} failed</>
+              )}
+            </span>
+          </button>
+        )}
         <button
           onClick={() => onSelectView('settings')}
           className={`w-full h-9 flex items-center ${collapsed ? 'justify-center px-0' : 'justify-start px-2.5'} gap-2.5 rounded-lg border transition-colors outline-none ${

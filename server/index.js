@@ -11,24 +11,50 @@ import {
   getActiveProject,
   createProject,
   updateProject,
+  removeImagePackFromProjects,
   deleteProject,
   setActiveProject,
   getQueue,
   setQueue,
   addToQueue,
   removeFromQueue,
+  getPlans,
+  getPlan,
+  savePlan,
+  deletePlan,
+  getDismissedPublishedPostIds,
+  dismissPublishedPost,
+  restorePublishedPost,
+  reconcileDismissedPublishedPosts,
+  invalidateLibraryAssetReferences,
   CONFIG_DIR,
 } from './store.js'
-import { listAccounts, listPosts, listAnalytics, syncAnalytics, uploadMedia, createPost } from './postbridge.js'
-import { generateSlideshows, improveSlideshow } from './generate.js'
+import {
+  listAccounts,
+  listPosts,
+  listPostSchedule,
+  getPost,
+  getPostMedia,
+  updatePostSchedule,
+  deletePost,
+  listAnalytics,
+  syncAnalytics,
+  uploadMedia,
+  createPost,
+} from './postbridge.js'
+import { cleanGenerationNotes, generateSlideshows, improveSlideshow } from './generate.js'
 import { listModels } from './openrouter.js'
 import { listDeepSeekModels, providerKey, providerModel, validateProviderKey } from './ai.js'
 import {
   listLibrary,
   listPacks,
+  resolveBackgroundSelection,
+  assignBackgrounds,
   scrapePinterest,
   removeScraped,
   getScrapedFile,
+  getLibraryAsset,
+  assertPostAssetsAvailable,
   importImages,
   moveImageToFolder,
   moveImagesFromFolder,
@@ -39,6 +65,7 @@ import {
   scrapeVideos,
   removeVideo,
   getVideoFile,
+  getVideoAsset,
   moveVideoToFolder,
   moveVideosFromFolder,
 } from './videoLibrary.js'
@@ -48,6 +75,8 @@ import { getLearningMemory, rebuildLearningMemory, clearLearningMemory } from '.
 import { normalizeHashtags } from './hashtags.js'
 import { UNCATEGORIZED_FOLDER_ID, createFolder, deleteFolder, listFolders, renameFolder } from './folders.js'
 import { logger } from './log.js'
+import { assertPublishable, isQualityStale, repairQuality, runQualityGate } from './quality.js'
+import { createPlan, movePlanSlot, planProgress, plannerStatusForQualityReport, scheduleFingerprint } from './planner.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const schedLog = logger('schedule')
@@ -75,7 +104,7 @@ app.use((req, res, next) => {
 // Wrap async handlers so thrown errors become clean 500 JSON instead of crashes.
 const h = (fn) => (req, res) => fn(req, res).catch((e) => {
   console.error(e)
-  res.status(500).json({ error: e.message || String(e) })
+  res.status(Number(e.status) || 500).json({ error: e.message || String(e), ...(e.qualityReport ? { qualityReport: e.qualityReport } : {}) })
 })
 
 // ── Config ──────────────────────────────────────────────────────────────────
@@ -138,7 +167,12 @@ app.delete('/api/trends', h(async (_req, res) => res.json(clearTrends(getActiveP
 // ── Queue (generated drafts for the active project, before post-bridge) ───────
 app.get('/api/queue', h(async (_req, res) => {
   const project = getActiveProject()
-  res.json(getQueue(project.id))
+  const queue = getQueue(project.id)
+  const checked = queue.map((post, index) => isQualityStale(post)
+    ? withQuality(post, project, { recentHooks: queue.slice(0, index).map((item) => item.hook) })
+    : post)
+  if (checked.some((post, index) => post !== queue[index])) setQueue(project.id, checked)
+  res.json(checked)
 }))
 
 app.post('/api/generate', h(async (req, res) => {
@@ -154,6 +188,12 @@ app.post('/api/generate', h(async (req, res) => {
   const trendIds = Array.isArray(req.body?.trendIds) ? req.body.trendIds : []
   const trends = req.body?.useTrends || trendIds.length ? trendsForPrompt(project.id, trendIds) : []
   const learning = req.body?.useLearning ? getLearningMemory(project.id) : null
+
+  // Validate folder-backed packs before spending time or API credit on content
+  // generation. Explicit Library selections never fall back to bundled images.
+  const packs = Array.isArray(req.body?.packs) ? req.body.packs : project.imagePacks || []
+  const folderIds = Array.isArray(req.body?.folderIds) ? req.body.folderIds : []
+  const backgroundPool = resolveBackgroundSelection(packs, folderIds)
   const slideshows = await generateSlideshows({
     provider,
     apiKey,
@@ -170,6 +210,7 @@ app.post('/api/generate', h(async (req, res) => {
       ctaKeyword: req.body?.ctaKeyword,
       topicMode: req.body?.topicMode === 'custom' ? 'custom' : 'general',
       topic: req.body?.topicMode === 'custom' ? String(req.body?.topic || '').trim() : undefined,
+      generationNotes: cleanGenerationNotes(req.body?.generationNotes) || undefined,
       postFormat: req.body?.postFormat === 'notes' ? 'notes' : 'standard',
     },
   })
@@ -177,28 +218,17 @@ app.post('/api/generate', h(async (req, res) => {
   // Auto-assign background images. A per-batch `packs` override (from the
   // Generate modal) wins; otherwise fall back to the project's saved packs.
   // Empty selection → slides keep their gradients.
-  const packs = Array.isArray(req.body?.packs) ? req.body.packs : project.imagePacks || []
-  const folderIds = Array.isArray(req.body?.folderIds) ? req.body.folderIds : []
-  const pool = packs.length || folderIds.length
-    ? listLibrary().filter((i) => packs.includes(i.pack) || folderIds.includes(i.folderId))
-    : []
-  if (pool.length) {
-    genLog.step(`assigning backgrounds from ${packs.length} pack${packs.length === 1 ? '' : 's'} (${pool.length} images)`)
-    for (const show of slideshows) {
-      const used = new Set()
-      const slidesToAssign = show.format === 'notes' ? show.slides.slice(0, 1) : show.slides
-      for (const slide of slidesToAssign) {
-        // Prefer an unused image within this slideshow for visual variety.
-        const fresh = pool.filter((i) => !used.has(i.url))
-        const pick = (fresh.length ? fresh : pool)[Math.floor(Math.random() * (fresh.length || pool.length))]
-        slide.imageUrl = pick.url
-        used.add(pick.url)
-      }
-    }
+  if (backgroundPool.length) {
+    const packCount = packs.length + folderIds.length
+    genLog.step(`assigning backgrounds from ${packCount} pack${packCount === 1 ? '' : 's'} (${backgroundPool.length} images)`)
+    assignBackgrounds(slideshows, backgroundPool)
   }
 
-  addToQueue(project.id, slideshows)
-  res.json(slideshows)
+  const checked = slideshows.map((show, index) => withQuality(show, project, {
+    recentHooks: slideshows.slice(0, index).map((item) => item.hook),
+  }))
+  addToQueue(project.id, checked)
+  res.json(checked)
 }))
 
 app.delete('/api/queue/:id', h(async (req, res) =>
@@ -215,6 +245,14 @@ app.put('/api/queue/:id', h(async (req, res) => {
     const merged = { ...s }
     for (const k of allowed) if (patch[k] !== undefined) merged[k] = patch[k]
     if (patch.hashtags !== undefined) merged.hashtags = normalizeHashtags(patch.hashtags, { brain: getActiveProject().brain })
+    if (patch.slides !== undefined) {
+      merged.mediaUnavailable = merged.slides.some((slide) => slide.imageUnavailable)
+      merged.mediaError = merged.mediaUnavailable
+        ? 'A Library background used by this draft is unavailable. Choose another background before publishing.'
+        : undefined
+    }
+    merged.qualityReport = null
+    merged.qualityInvalidatedAt = new Date().toISOString()
     return merged
   })
   res.json(setQueue(pid, next))
@@ -240,7 +278,417 @@ app.post('/api/queue/:id/rewrite', h(async (req, res) => {
     learning: getLearningMemory(project.id),
     threshold: req.body?.minScore || 7,
   })
-  res.json(setQueue(project.id, queue.map((s) => (s.id === req.params.id ? improved : s))))
+  const checked = withQuality(improved, project, {
+    recentHooks: queue.filter((item) => item.id !== current.id).map((item) => item.hook),
+  })
+  res.json(setQueue(project.id, queue.map((s) => (s.id === req.params.id ? checked : s))))
+}))
+
+app.post('/api/queue/:id/quality', h(async (req, res) => {
+  const project = getActiveProject()
+  const queue = getQueue(project.id)
+  const current = queue.find((item) => item.id === req.params.id)
+  if (!current) return res.status(404).json({ error: 'This slideshow is no longer in the queue.' })
+  const checked = withQuality(current, project, {
+    recentHooks: queue.filter((item) => item.id !== current.id).map((item) => item.hook),
+  })
+  res.json(setQueue(project.id, queue.map((item) => item.id === current.id ? checked : item)))
+}))
+
+app.post('/api/queue/:id/quality/fix', h(async (req, res) => {
+  const project = getActiveProject()
+  const queue = getQueue(project.id)
+  const current = queue.find((item) => item.id === req.params.id)
+  if (!current) return res.status(404).json({ error: 'This slideshow is no longer in the queue.' })
+  const repaired = repairQuality(current, { brain: project.brain })
+  const checked = withQuality(repaired, project, {
+    recentHooks: queue.filter((item) => item.id !== current.id).map((item) => item.hook),
+  })
+  res.json(setQueue(project.id, queue.map((item) => item.id === current.id ? checked : item)))
+}))
+
+// ── Autopilot content plans ────────────────────────────────────────────────
+app.get('/api/plans', h(async (_req, res) => {
+  const project = getActiveProject()
+  res.json(getPlans(project.id).map((stored) => {
+    const plan = refreshStalePlanQuality(project, stored)
+    return { ...plan, progress: planProgress(plan) }
+  }))
+}))
+
+app.get('/api/plans/:id', h(async (req, res) => {
+  const project = getActiveProject()
+  const stored = getPlan(project.id, req.params.id)
+  if (!stored) return res.status(404).json({ error: 'Content plan not found.' })
+  const plan = refreshStalePlanQuality(project, stored)
+  res.json({ ...plan, progress: planProgress(plan) })
+}))
+
+app.post('/api/plans/preview', h(async (req, res) => {
+  const config = getConfig()
+  const project = getActiveProject(config)
+  let existingPosts = []
+  if (config.keys.postbridge) {
+    try { existingPosts = await listPostSchedule(config.keys.postbridge) } catch {}
+  }
+  const preview = createPlan(req.body || {}, { projectId: project.id, existingPosts })
+  res.json({ config: preview.config, slots: preview.slots, progress: planProgress(preview) })
+}))
+
+app.post('/api/plans', h(async (req, res) => {
+  const config = getConfig()
+  const project = getActiveProject(config)
+  let existingPosts = []
+  if (config.keys.postbridge) {
+    try { existingPosts = await listPostSchedule(config.keys.postbridge) } catch {}
+  }
+  const plan = createPlan(req.body || {}, { projectId: project.id, existingPosts })
+  savePlan(project.id, plan)
+  res.json({ ...plan, progress: planProgress(plan) })
+}))
+
+app.delete('/api/plans/:id', h(async (req, res) => {
+  const project = getActiveProject()
+  res.json(deletePlan(project.id, req.params.id))
+}))
+
+app.put('/api/plans/:planId/slots/:slotId', h(async (req, res) => {
+  const config = getConfig()
+  const project = getActiveProject(config)
+  let plan = getPlan(project.id, req.params.planId)
+  if (!plan) return res.status(404).json({ error: 'Content plan not found.' })
+  const slot = plan.slots.find((item) => item.id === req.params.slotId)
+  if (!slot) return res.status(404).json({ error: 'Planned slot not found.' })
+  if (['scheduling', 'scheduled'].includes(slot.status)) return res.status(409).json({ error: 'This slot can no longer be edited.' })
+  const patch = req.body || {}
+  if (patch.localDate || patch.localTime) {
+    let existingPosts = []
+    if (config.keys.postbridge) {
+      try { existingPosts = await listPostSchedule(config.keys.postbridge) } catch {}
+    }
+    plan = movePlanSlot(plan, slot.id, {
+      localDate: String(patch.localDate || slot.localDate),
+      localTime: String(patch.localTime || slot.localTime),
+    }, existingPosts)
+  }
+  const metadataPatch = {}
+  for (const key of ['topic', 'pillar', 'format', 'backgroundSelection']) {
+    if (patch[key] !== undefined) metadataPatch[key] = patch[key]
+  }
+  if (patch.socialAccountIds !== undefined) metadataPatch.socialAccountIds = [...new Set((patch.socialAccountIds || []).map(Number).filter(Number.isFinite))]
+  if (patch.removed === true) Object.assign(metadataPatch, { status: 'removed', approvedAt: null })
+  const generationInputsChanged = Object.keys(metadataPatch).some((key) => ['topic', 'pillar', 'format', 'backgroundSelection'].includes(key))
+  if (generationInputsChanged) Object.assign(metadataPatch, { post: null, qualityReport: null, approvedAt: null, status: 'planned', error: null })
+  else if (metadataPatch.socialAccountIds && slot.post) Object.assign(metadataPatch, { qualityReport: null, approvedAt: null, status: 'needs_attention', error: null })
+  if (patch.postPatch && slot.post) {
+    Object.assign(metadataPatch, {
+      post: { ...slot.post, ...patch.postPatch, qualityReport: null },
+      qualityReport: null,
+      approvedAt: null,
+      status: 'needs_attention',
+    })
+  }
+  if (Object.keys(metadataPatch).length) plan = updatePlanSlot(project.id, plan, slot.id, metadataPatch)
+  else savePlan(project.id, plan)
+  res.json({ ...plan, progress: planProgress(plan) })
+}))
+
+app.post('/api/plans/:planId/slots/:slotId/generate', h(async (req, res) => {
+  const config = getConfig()
+  const project = getActiveProject(config)
+  let plan = getPlan(project.id, req.params.planId)
+  if (!plan) return res.status(404).json({ error: 'Content plan not found.' })
+  const slot = plan.slots.find((item) => item.id === req.params.slotId)
+  if (!slot || slot.status === 'removed') return res.status(404).json({ error: 'Planned slot not found.' })
+  if (['generating', 'quality_check', 'scheduling', 'scheduled'].includes(slot.status)) return res.status(409).json({ error: 'This slot is already busy or scheduled.' })
+
+  plan = updatePlanSlot(project.id, plan, slot.id, { status: 'generating', error: null, approvedAt: null })
+  try {
+    const provider = config.aiProvider || 'openrouter'
+    const model = providerModel(config, provider)
+    const apiKey = providerKey(config.keys, provider)
+    const accounts = config.keys.postbridge ? await listAccounts(config.keys.postbridge).catch(() => []) : []
+    const selected = new Set(slot.socialAccountIds.map(Number))
+    const platformNames = accounts.filter((account) => selected.has(Number(account.id))).map((account) => account.platform)
+    const trends = plan.config.topicMode === 'general' && plan.config.useTrends ? trendsForPrompt(project.id, []) : []
+    const plannerNotes = [
+      plan.config.generationNotes,
+      `Campaign goal: ${plan.config.goal}. Content pillar: ${slot.pillar}.`,
+      plan.config.productEmphasis ? `Required product or offer emphasis: ${plan.config.productEmphasis}.` : '',
+      platformNames.length ? `Target platforms: ${platformNames.join(', ')}. Respect their requirements.` : '',
+    ].filter(Boolean).join('\n')
+    const generated = await generateSlideshows({
+      provider, apiKey, model, brain: project.brain, count: 1,
+      options: {
+        trends,
+        learning: getLearningMemory(project.id),
+        qualityMode: 'off',
+        topicMode: 'custom',
+        topic: slot.topic,
+        contentBucket: slot.pillar,
+        generationNotes: plannerNotes,
+        postFormat: slot.format === 'notes' ? 'notes' : 'standard',
+        generationMode: 'planner',
+      },
+    })
+    let post = generated[0]
+    if (!post) throw new Error('The AI provider returned no post.')
+    if (slot.format === 'image') post = { ...post, slides: post.slides.slice(0, 1) }
+    post = {
+      ...post,
+      id: `planner-${slot.id}`,
+      topic: slot.topic,
+      topicMode: plan.config.topicMode,
+      contentBucket: slot.pillar,
+      generationNotes: plan.config.generationNotes,
+      productEmphasis: plan.config.productEmphasis || undefined,
+      productRequirement: plan.config.productEmphasis
+        ? { required: true, value: plan.config.productEmphasis }
+        : undefined,
+      promotional: slot.promotional === true || plan.config.promotional === true,
+      plannerFormat: slot.format,
+      plannerSlotId: slot.id,
+    }
+    if (slot.format !== 'video') {
+      const selections = slot.backgroundSelection ? [slot.backgroundSelection] : plan.config.backgroundSelections
+      if (selections.length) assignBackgrounds([post], resolveBackgroundSelection(selections))
+    }
+    plan = updatePlanSlot(project.id, plan, slot.id, { status: 'quality_check', post })
+    const currentPlan = plan
+    const recentHooks = currentPlan.slots.filter((item) => item.id !== slot.id && item.post?.hook).map((item) => item.post.hook)
+    const qualityReport = runQualityGate(post, { brain: project.brain, recentHooks })
+    const status = plannerStatusForQualityReport(qualityReport)
+    plan = updatePlanSlot(project.id, plan, slot.id, { post: { ...post, qualityReport }, qualityReport, status, error: null })
+  } catch (error) {
+    plan = updatePlanSlot(project.id, plan, slot.id, { status: 'failed', error: error.message || String(error) })
+  }
+  res.json({ ...plan, progress: planProgress(plan) })
+}))
+
+app.post('/api/plans/:planId/slots/:slotId/quality/fix', h(async (req, res) => {
+  const project = getActiveProject()
+  let plan = getPlan(project.id, req.params.planId)
+  if (!plan) return res.status(404).json({ error: 'Content plan not found.' })
+  const slot = plan.slots.find((item) => item.id === req.params.slotId)
+  if (!slot?.post) return res.status(409).json({ error: 'Generate this slot before repairing it.' })
+  const repaired = repairQuality(slot.post, { brain: project.brain })
+  const qualityReport = runQualityGate(repaired, {
+    brain: project.brain,
+    recentHooks: plan.slots.filter((item) => item.id !== slot.id && item.post?.hook).map((item) => item.post.hook),
+  })
+  plan = updatePlanSlot(project.id, plan, slot.id, {
+    post: { ...repaired, qualityReport }, qualityReport,
+    status: plannerStatusForQualityReport(qualityReport),
+    approvedAt: null,
+  })
+  res.json({ ...plan, progress: planProgress(plan) })
+}))
+
+app.post('/api/plans/:planId/slots/:slotId/quality', h(async (req, res) => {
+  const project = getActiveProject()
+  let plan = getPlan(project.id, req.params.planId)
+  if (!plan) return res.status(404).json({ error: 'Content plan not found.' })
+  const slot = plan.slots.find((item) => item.id === req.params.slotId)
+  if (!slot?.post) return res.status(409).json({ error: 'Generate this slot before checking it.' })
+  const qualityReport = runQualityGate(slot.post, {
+    brain: project.brain,
+    recentHooks: plan.slots.filter((item) => item.id !== slot.id && item.post?.hook).map((item) => item.post.hook),
+  })
+  plan = updatePlanSlot(project.id, plan, slot.id, {
+    post: { ...slot.post, qualityReport }, qualityReport,
+    status: plannerStatusForQualityReport(qualityReport),
+    approvedAt: null,
+    error: null,
+  })
+  res.json({ ...plan, progress: planProgress(plan) })
+}))
+
+app.post('/api/plans/:planId/slots/:slotId/approve', h(async (req, res) => {
+  const project = getActiveProject()
+  let plan = getPlan(project.id, req.params.planId)
+  if (!plan) return res.status(404).json({ error: 'Content plan not found.' })
+  const slot = plan.slots.find((item) => item.id === req.params.slotId)
+  if (!slot?.post) return res.status(409).json({ error: 'Generate this slot before approving it.' })
+  const qualityReport = isQualityStale(slot.post, slot.qualityReport)
+    ? runQualityGate(slot.post, { brain: project.brain, recentHooks: plan.slots.filter((item) => item.id !== slot.id && item.post?.hook).map((item) => item.post.hook) })
+    : slot.qualityReport
+  if (qualityReport.status === 'blocked') return res.status(409).json({ error: 'Blocking Quality Gate findings must be resolved before approval.', qualityReport })
+  if (qualityReport.status === 'warnings' && !req.body?.warningsAcknowledged) return res.status(409).json({ error: 'Acknowledge the Quality Gate warnings before approval.', qualityReport })
+  plan = updatePlanSlot(project.id, plan, slot.id, {
+    qualityReport,
+    post: { ...slot.post, qualityReport },
+    status: 'approved',
+    approvedAt: new Date().toISOString(),
+    warningsAcknowledgedAt: qualityReport.status === 'warnings' ? new Date().toISOString() : null,
+  })
+  res.json({ ...plan, progress: planProgress(plan) })
+}))
+
+app.post('/api/plans/:planId/approve-ready', h(async (req, res) => {
+  const project = getActiveProject()
+  let plan = getPlan(project.id, req.params.planId)
+  if (!plan) return res.status(404).json({ error: 'Content plan not found.' })
+  const now = new Date().toISOString()
+  const warningsAcknowledged = req.body?.warningsAcknowledged === true
+  plan = {
+    ...plan,
+    slots: plan.slots.map((slot) => slot.status === 'ready_for_review'
+      && (slot.qualityReport?.status === 'passed' || (warningsAcknowledged && slot.qualityReport?.status === 'warnings'))
+      ? {
+          ...slot,
+          status: 'approved',
+          approvedAt: now,
+          warningsAcknowledgedAt: slot.qualityReport?.status === 'warnings' ? now : null,
+          updatedAt: now,
+        }
+      : slot),
+    updatedAt: now,
+  }
+  savePlan(project.id, plan)
+  res.json({ ...plan, progress: planProgress(plan) })
+}))
+
+app.post('/api/plans/:planId/confirm-automatic', h(async (req, res) => {
+  const project = getActiveProject()
+  const plan = getPlan(project.id, req.params.planId)
+  if (!plan) return res.status(404).json({ error: 'Content plan not found.' })
+  if (plan.config.approvalMode !== 'automatic') return res.status(409).json({ error: 'This plan uses manual approval.' })
+  if (req.body?.confirm !== true) return res.status(400).json({ error: 'Explicit automatic scheduling confirmation is required.' })
+  const next = { ...plan, automaticSchedulingConfirmedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
+  savePlan(project.id, next)
+  res.json({ ...next, progress: planProgress(next) })
+}))
+
+app.post('/api/plans/:planId/slots/:slotId/schedule', h(async (req, res) => {
+  const config = getConfig()
+  const project = getActiveProject(config)
+  let plan = getPlan(project.id, req.params.planId)
+  if (!plan) return res.status(404).json({ error: 'Content plan not found.' })
+  const slot = plan.slots.find((item) => item.id === req.params.slotId)
+  if (!slot?.post) return res.status(409).json({ error: 'Generate this slot before scheduling it.' })
+  const retryableUploadFailure = slot.status === 'failed' && slot.approvedAt && !slot.scheduleAttemptedAt && !slot.scheduleUncertain
+  if (slot.status !== 'approved' && !retryableUploadFailure) return res.status(409).json({ error: 'Approve this post before scheduling it.' })
+  if (slot.postbridgeId) return res.status(409).json({ error: 'This planned post is already scheduled.' })
+  if (slot.scheduleUncertain || slot.scheduleAttemptedAt) {
+    return res.status(409).json({ error: 'A previous scheduling attempt may have reached Postbridge. Verify it there before retrying.' })
+  }
+  if (slot.conflicts?.length) return res.status(409).json({ error: 'Resolve this slot’s scheduling conflict first.' })
+  if (plan.config.approvalMode === 'automatic' && !plan.automaticSchedulingConfirmedAt) {
+    return res.status(409).json({ error: 'Confirm automatic scheduling before starting.' })
+  }
+  if (slot.format !== 'video') assertPostAssetsAvailable(slot.post)
+
+  const postType = slot.format === 'video' ? 'video' : slot.format === 'image' ? 'image' : 'carousel'
+  const warningsAcknowledged = slot.qualityReport?.status !== 'warnings' || !!slot.warningsAcknowledgedAt
+  const caption = [
+    String(slot.post.caption || '').trim(),
+    (slot.post.hashtags || []).map((tag) => `#${String(tag).replace(/^#+/, '')}`).join(' '),
+  ].filter(Boolean).join('\n\n')
+  let renderedMedia = Array.isArray(req.body?.slides) ? req.body.slides : []
+  if (postType === 'image') renderedMedia = renderedMedia.slice(0, 1)
+  const videoId = String(req.body?.videoId || plan.config.videoId || '')
+  const videoFile = postType === 'video' ? getVideoFile(videoId) : null
+  const videoAsset = postType === 'video' ? listVideos().find((item) => item.id === videoId) : null
+  plan = updatePlanSlot(project.id, plan, slot.id, { status: 'scheduling', error: null })
+  let context
+  let qualityReport
+  try {
+    context = await publishContext({
+      keys: config.keys,
+      project,
+      post: slot.post,
+      socialAccounts: slot.socialAccountIds,
+      scheduledAt: slot.scheduledAt,
+      mode: 'schedule',
+      timezone: slot.timezone || plan.config.timezone,
+      postType,
+      renderedMedia,
+      videoId,
+      video: postType === 'video' ? { exists: !!videoFile, duration: videoAsset?.duration || Number(req.body?.duration) || null } : undefined,
+      fullCaption: caption,
+    })
+    qualityReport = runQualityGate(slot.post, context)
+    assertPublishable(qualityReport, { warningsAcknowledged })
+    plan = updatePlanSlot(project.id, plan, slot.id, { qualityReport })
+  } catch (error) {
+    plan = updatePlanSlot(project.id, plan, slot.id, { status: 'approved', qualityReport: qualityReport || slot.qualityReport, error: error.message || String(error) })
+    throw error
+  }
+
+  let upload
+  try {
+    if (postType === 'video') {
+      const rendered = await renderVideoPost({
+        slideshow: slot.post,
+        videoFile,
+        duration: Number(req.body?.duration) || 12,
+        textPosition: req.body?.textPosition === 'top' ? 'top' : 'center',
+        watermark: req.body?.watermark !== false,
+      })
+      qualityReport = runQualityGate(slot.post, {
+        ...context,
+        video: { exists: true, duration: rendered.duration, sizeBytes: rendered.buffer.length },
+      })
+      assertPublishable(qualityReport, { warningsAcknowledged })
+      const mediaId = await uploadMedia(config.keys.postbridge, {
+        buffer: rendered.buffer,
+        mimeType: 'video/mp4',
+        name: `${slot.id}-video.mp4`,
+      })
+      upload = [mediaId]
+    } else {
+      upload = await Promise.all(renderedMedia.map(async (slide, index) => uploadMedia(config.keys.postbridge, {
+        buffer: Buffer.from(String(slide).replace(/^data:image\/\w+;base64,/, ''), 'base64'),
+        mimeType: 'image/png',
+        name: `${slot.id}-${index + 1}.png`,
+      })))
+    }
+  } catch (error) {
+    plan = updatePlanSlot(project.id, plan, slot.id, { status: 'approved', error: error.message || String(error), scheduleAttemptedAt: null, scheduleUncertain: false })
+    return res.status(502).json({ error: error.message || String(error), plan: { ...plan, progress: planProgress(plan) } })
+  }
+
+  const fingerprint = scheduleFingerprint(plan.id, { ...slot, qualityReport })
+  plan = updatePlanSlot(project.id, plan, slot.id, {
+    status: 'scheduling',
+    qualityReport,
+    scheduleFingerprint: fingerprint,
+    scheduleAttemptedAt: new Date().toISOString(),
+  })
+  let remote
+  try {
+    remote = await createPost(config.keys.postbridge, {
+      caption,
+      mediaIds: upload,
+      socialAccounts: slot.socialAccountIds,
+      scheduledAt: slot.scheduledAt,
+      isDraft: false,
+    })
+  } catch (error) {
+    plan = updatePlanSlot(project.id, plan, slot.id, {
+      status: 'failed',
+      error: `${error.message || String(error)} Check Postbridge before retrying.`,
+      scheduleUncertain: true,
+    })
+    return res.status(502).json({ error: 'The Postbridge create response was uncertain. Check Postbridge before retrying.', plan: { ...plan, progress: planProgress(plan) } })
+  }
+  const remoteId = remote?.id || remote?.data?.id
+  if (!remoteId) {
+    plan = updatePlanSlot(project.id, plan, slot.id, {
+      status: 'failed',
+      error: 'Postbridge accepted the request but did not return a post ID. Verify the schedule before retrying.',
+      scheduleUncertain: true,
+    })
+    return res.status(502).json({ error: 'Postbridge returned no post ID. Check Postbridge before retrying.', plan: { ...plan, progress: planProgress(plan) } })
+  }
+  plan = updatePlanSlot(project.id, plan, slot.id, {
+    status: 'scheduled',
+    postbridgeId: String(remoteId),
+    scheduledAt: slot.scheduledAt,
+    scheduleUncertain: false,
+    error: null,
+  })
+  res.json({ ...plan, progress: planProgress(plan) })
 }))
 
 // ── Image library (bundled aesthetic packs + Pinterest scrapes via Apify) ────────
@@ -252,7 +700,9 @@ app.put('/api/library/folders/:id', h(async (req, res) => res.json(renameFolder(
 app.delete('/api/library/folders/:id', h(async (req, res) => {
   moveImagesFromFolder(req.params.id, UNCATEGORIZED_FOLDER_ID)
   moveVideosFromFolder(req.params.id, UNCATEGORIZED_FOLDER_ID)
-  res.json(deleteFolder(req.params.id))
+  const remainingFolders = deleteFolder(req.params.id)
+  removeImagePackFromProjects(req.params.id)
+  res.json(remainingFolders)
 }))
 
 app.post('/api/library/scrape', h(async (req, res) => {
@@ -263,7 +713,13 @@ app.post('/api/library/scrape', h(async (req, res) => {
 
 app.post('/api/library/import', h(async (req, res) => res.json(importImages(req.body || {}))))
 
-app.delete('/api/library/:id', h(async (req, res) => res.json(removeScraped(req.params.id))))
+app.delete('/api/library/:id', h(async (req, res) => {
+  const asset = getLibraryAsset(req.params.id)
+  const images = removeScraped(req.params.id)
+  const replacement = images.find((item) => item.source !== 'bundled' && item.folderId === asset.folderId) || null
+  invalidateLibraryAssetReferences({ ...asset, type: 'image' }, replacement)
+  res.json(images)
+}))
 
 app.put('/api/library/assets/:id/folder', h(async (req, res) => {
   const type = req.body?.type === 'video' ? 'video' : 'image'
@@ -274,6 +730,8 @@ app.put('/api/library/assets/:id/folder', h(async (req, res) => {
 app.get('/api/library/img/:id', h(async (req, res) => {
   const file = getScrapedFile(req.params.id)
   if (!file) return res.status(404).end()
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+  res.set('Pragma', 'no-cache')
   // dotfiles:'allow' is required — the path lives under ~/.slidesmith, and
   // sendFile blocks dot-segment paths by default (would 404 every scrape).
   res.sendFile(file, { dotfiles: 'allow' })
@@ -293,11 +751,19 @@ app.post('/api/videos/scrape', h(async (req, res) => {
   res.json(await scrapeVideos({ apiKey: keys.apify, actor, source, count, folderId }))
 }))
 
-app.delete('/api/videos/:id', h(async (req, res) => res.json(removeVideo(req.params.id))))
+app.delete('/api/videos/:id', h(async (req, res) => {
+  const asset = getVideoAsset(req.params.id)
+  const videos = removeVideo(req.params.id)
+  const replacement = videos.find((item) => item.folderId === asset.folderId) || null
+  invalidateLibraryAssetReferences({ ...asset, type: 'video' }, replacement)
+  res.json(videos)
+}))
 
 app.get('/api/videos/:id', h(async (req, res) => {
   const file = getVideoFile(req.params.id)
   if (!file) return res.status(404).end()
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+  res.set('Pragma', 'no-cache')
   res.sendFile(file, { dotfiles: 'allow', acceptRanges: true })
 }))
 
@@ -308,8 +774,71 @@ app.get('/api/accounts', h(async (_req, res) => {
 }))
 
 app.get('/api/posts', h(async (_req, res) => {
+  const config = getConfig()
+  const project = getActiveProject(config)
+  const posts = await listPosts(config.keys.postbridge)
+  reconcileDismissedPublishedPosts(project.id, posts.map((post) => post.id))
+  res.json(posts)
+}))
+
+app.get('/api/schedule-dismissals', h(async (_req, res) => {
+  const project = getActiveProject()
+  res.json(getDismissedPublishedPostIds(project.id))
+}))
+
+app.post('/api/schedule-dismissals/:id', h(async (req, res) => {
+  const project = getActiveProject()
+  const id = String(req.params.id || '').trim()
+  if (!id || id.length > 200) return res.status(400).json({ error: 'Invalid post ID.' })
+  res.json(dismissPublishedPost(project.id, id))
+}))
+
+app.delete('/api/schedule-dismissals/:id', h(async (req, res) => {
+  const project = getActiveProject()
+  const id = String(req.params.id || '').trim()
+  if (!id || id.length > 200) return res.status(400).json({ error: 'Invalid post ID.' })
+  res.json(restorePublishedPost(project.id, id))
+}))
+
+app.get('/api/posts/:id/media', h(async (req, res) => {
   const { keys } = getConfig()
-  res.json(await listPosts(keys.postbridge))
+  const id = String(req.params.id || '').trim()
+  if (!id || id.length > 200) return res.status(400).json({ error: 'Invalid post ID.' })
+  res.json(await getPostMedia(keys.postbridge, id))
+}))
+
+app.patch('/api/posts/:id/schedule', h(async (req, res) => {
+  const { keys } = getConfig()
+  const id = String(req.params.id || '').trim()
+  const scheduledAt = String(req.body?.scheduledAt || '').trim()
+  const when = new Date(scheduledAt)
+  if (!id || id.length > 200) return res.status(400).json({ error: 'Invalid post ID.' })
+  if (!scheduledAt || Number.isNaN(when.getTime())) {
+    return res.status(400).json({ error: 'Choose a valid date and time.' })
+  }
+  if (when.getTime() <= Date.now()) {
+    return res.status(400).json({ error: 'Scheduled time must be in the future.' })
+  }
+
+  const current = await getPost(keys.postbridge, id)
+  if (String(current?.status || '').toLowerCase() !== 'scheduled' || current?.is_draft) {
+    return res.status(409).json({ error: 'Only scheduled posts can be rescheduled.' })
+  }
+  res.json(await updatePostSchedule(keys.postbridge, id, when.toISOString()))
+}))
+
+app.delete('/api/posts/:id', h(async (req, res) => {
+  const { keys } = getConfig()
+  const id = String(req.params.id || '').trim()
+  if (!id || id.length > 200) return res.status(400).json({ error: 'Invalid post ID.' })
+
+  const current = await getPost(keys.postbridge, id)
+  const status = String(current?.status || '').toLowerCase()
+  if (status !== 'scheduled' && !current?.is_draft) {
+    return res.status(409).json({ error: 'Only scheduled posts or drafts can be removed.' })
+  }
+  await deletePost(keys.postbridge, id)
+  res.json({ ok: true })
 }))
 
 app.get('/api/results', h(async (_req, res) => {
@@ -344,9 +873,33 @@ app.delete('/api/learning', h(async (_req, res) => res.json(clearLearningMemory(
 // create the post. `slides` are data URLs (PNG) rendered in the browser.
 app.post('/api/schedule', h(async (req, res) => {
   const { keys } = getConfig()
-  const { id, caption, slides, socialAccounts, scheduledAt, mode } = req.body || {}
+  const { id, caption, slides, socialAccounts, scheduledAt, mode, timezone, warningsAcknowledged } = req.body || {}
   if (!socialAccounts?.length) throw new Error('Pick at least one social account.')
   if (!slides?.length) throw new Error('No slide images to upload.')
+
+  const project = getActiveProject()
+  const slideshow = getQueue(project.id).find((item) => item.id === id)
+  if (!slideshow) throw new Error('This slideshow is no longer in the queue.')
+  if (['preflight', 'uploading', 'creating', 'uncertain'].includes(slideshow.schedulingState)) {
+    throw new Error(slideshow.schedulingState === 'uncertain'
+      ? 'A previous scheduling response was uncertain. Check Postbridge before retrying to avoid a duplicate.'
+      : 'This post is already being scheduled.')
+  }
+  assertPostAssetsAvailable(slideshow)
+  updateQueueItem(project.id, id, { schedulingState: 'preflight', schedulingStartedAt: new Date().toISOString() })
+  let qualityReport
+  try {
+    const context = await publishContext({
+      keys, project, post: slideshow, socialAccounts, scheduledAt, mode, timezone,
+      postType: slides.length > 1 ? 'carousel' : 'image', renderedMedia: slides, fullCaption: caption,
+    })
+    qualityReport = runQualityGate(slideshow, context)
+    assertPublishable(qualityReport, { warningsAcknowledged: !!warningsAcknowledged })
+  } catch (error) {
+    updateQueueItem(project.id, id, { qualityReport: qualityReport || slideshow.qualityReport, schedulingState: null, schedulingStartedAt: null, scheduleError: error.message })
+    throw error
+  }
+  updateQueueItem(project.id, id, { qualityReport, schedulingState: 'uploading', schedulingStartedAt: new Date().toISOString() })
 
   const when = mode === 'schedule' ? (scheduledAt ? `scheduled for ${scheduledAt}` : 'scheduled') : 'draft'
   schedLog.start(`Posting ${id || 'slideshow'} → ${when} · ${socialAccounts.length} account${socialAccounts.length === 1 ? '' : 's'}`)
@@ -355,29 +908,50 @@ app.post('/api/schedule', h(async (req, res) => {
   // there's no reason to wait for each. Results stay in slide order (the index
   // into the array) so the carousel keeps its sequence.
   let done = 0
-  const mediaIds = await Promise.all(
-    slides.map(async (slide, i) => {
-      const buffer = Buffer.from(String(slide).replace(/^data:image\/\w+;base64,/, ''), 'base64')
-      const mediaId = await uploadMedia(keys.postbridge, {
-        buffer,
-        mimeType: 'image/png',
-        name: `${id || 'slide'}-${i + 1}.png`,
+  let mediaIds
+  try {
+    mediaIds = await Promise.all(
+      slides.map(async (slide, i) => {
+        const buffer = Buffer.from(String(slide).replace(/^data:image\/\w+;base64,/, ''), 'base64')
+        const mediaId = await uploadMedia(keys.postbridge, {
+          buffer,
+          mimeType: 'image/png',
+          name: `${id || 'slide'}-${i + 1}.png`,
+        })
+        schedLog.progress(++done, slides.length, 'slides uploaded')
+        return mediaId
       })
-      schedLog.progress(++done, slides.length, 'slides uploaded')
-      return mediaId
-    })
-  )
+    )
+  } catch (error) {
+    updateQueueItem(project.id, id, { schedulingState: null, schedulingStartedAt: null, scheduleError: error.message })
+    throw error
+  }
 
   schedLog.step(`creating post on post-bridge…`)
-  const post = await createPost(keys.postbridge, {
-    caption,
-    mediaIds,
-    socialAccounts,
-    scheduledAt: mode === 'schedule' ? scheduledAt : null,
-    isDraft: mode !== 'schedule', // "save as draft" leaves it unprocessed in post-bridge
-  })
+  updateQueueItem(project.id, id, { schedulingState: 'creating', scheduleAttemptedAt: new Date().toISOString() })
+  let post
+  try {
+    post = await createPost(keys.postbridge, {
+      caption,
+      mediaIds,
+      socialAccounts,
+      scheduledAt: mode === 'schedule' ? scheduledAt : null,
+      isDraft: mode !== 'schedule',
+    })
+  } catch (error) {
+    updateQueueItem(project.id, id, { schedulingState: 'uncertain', scheduleError: error.message })
+    throw new Error(`${error.message} The create response was uncertain; check Postbridge before retrying.`)
+  }
 
-  if (id) removeFromQueue(getActiveProject().id, id)
+  if (!(post?.id || post?.data?.id)) {
+    updateQueueItem(project.id, id, { schedulingState: 'uncertain', scheduleError: 'Postbridge returned no post ID.' })
+    throw new Error('Postbridge returned no post ID. Check Postbridge before retrying to avoid a duplicate.')
+  }
+  if (!(post?.id || post?.data?.id)) {
+    updateQueueItem(project.id, id, { schedulingState: 'uncertain', scheduleError: 'Postbridge returned no post ID.' })
+    throw new Error('Postbridge returned no post ID. Check Postbridge before retrying to avoid a duplicate.')
+  }
+  if (id) removeFromQueue(project.id, id)
   schedLog.ok(`Done — ${mode === 'schedule' ? 'scheduled' : 'saved as draft'}`)
   res.json(post)
 }))
@@ -386,7 +960,7 @@ app.post('/api/schedule', h(async (req, res) => {
 // timed text overlays, then upload through the same post-bridge flow.
 app.post('/api/schedule/video', h(async (req, res) => {
   const { keys } = getConfig()
-  const { id, caption, socialAccounts, scheduledAt, mode, videoId, duration, textPosition, watermark } = req.body || {}
+  const { id, caption, socialAccounts, scheduledAt, mode, videoId, duration, textPosition, watermark, timezone, warningsAcknowledged } = req.body || {}
   if (!keys.postbridge) throw new Error('Missing post-bridge API key. Add it in Settings.')
   if (!socialAccounts?.length) throw new Error('Pick at least one social account.')
   if (!videoId) throw new Error('Select a background video from the Video Library.')
@@ -394,28 +968,75 @@ app.post('/api/schedule/video', h(async (req, res) => {
   const project = getActiveProject()
   const slideshow = getQueue(project.id).find((s) => s.id === id)
   if (!slideshow) throw new Error('This slideshow is no longer in the queue.')
+  if (['preflight', 'rendering', 'uploading', 'creating', 'uncertain'].includes(slideshow.schedulingState)) {
+    throw new Error(slideshow.schedulingState === 'uncertain'
+      ? 'A previous scheduling response was uncertain. Check Postbridge before retrying to avoid a duplicate.'
+      : 'This post is already being scheduled.')
+  }
   const videoFile = getVideoFile(videoId)
   if (!videoFile) throw new Error('Selected background video could not be found.')
+  const videoAsset = listVideos().find((item) => item.id === videoId)
+  updateQueueItem(project.id, id, { schedulingState: 'preflight', schedulingStartedAt: new Date().toISOString() })
+  let context
+  let qualityReport
+  try {
+    context = await publishContext({
+      keys, project, post: slideshow, socialAccounts, scheduledAt, mode, timezone,
+      postType: 'video', videoId, fullCaption: caption,
+      video: { exists: true, duration: Number(duration) || videoAsset?.duration || null },
+    })
+    qualityReport = runQualityGate(slideshow, context)
+    assertPublishable(qualityReport, { warningsAcknowledged: !!warningsAcknowledged })
+  } catch (error) {
+    updateQueueItem(project.id, id, { qualityReport: qualityReport || slideshow.qualityReport, schedulingState: null, schedulingStartedAt: null, scheduleError: error.message })
+    throw error
+  }
+  updateQueueItem(project.id, id, { qualityReport, schedulingState: 'rendering', schedulingStartedAt: new Date().toISOString() })
 
   const when = mode === 'schedule' ? (scheduledAt ? `scheduled for ${scheduledAt}` : 'scheduled') : 'draft'
   schedLog.start(`Rendering video ${id || 'slideshow'} -> ${when} · ${socialAccounts.length} account${socialAccounts.length === 1 ? '' : 's'}`)
 
-  const rendered = await renderVideoPost({ slideshow, videoFile, duration, textPosition, watermark })
-  schedLog.step(`uploading rendered MP4 (${rendered.duration}s) to post-bridge...`)
-  const mediaId = await uploadMedia(keys.postbridge, {
-    buffer: rendered.buffer,
-    mimeType: 'video/mp4',
-    name: `${id || 'slideshow'}-video.mp4`,
+  let rendered
+  try {
+    rendered = await renderVideoPost({ slideshow, videoFile, duration, textPosition, watermark })
+  } catch (error) {
+    updateQueueItem(project.id, id, { schedulingState: null, schedulingStartedAt: null, scheduleError: error.message })
+    throw error
+  }
+  qualityReport = runQualityGate(slideshow, {
+    ...context,
+    video: { exists: true, duration: rendered.duration, sizeBytes: rendered.buffer.length },
   })
+  assertPublishable(qualityReport, { warningsAcknowledged: !!warningsAcknowledged })
+  updateQueueItem(project.id, id, { qualityReport, schedulingState: 'uploading' })
+  schedLog.step(`uploading rendered MP4 (${rendered.duration}s) to post-bridge...`)
+  let mediaId
+  try {
+    mediaId = await uploadMedia(keys.postbridge, {
+      buffer: rendered.buffer,
+      mimeType: 'video/mp4',
+      name: `${id || 'slideshow'}-video.mp4`,
+    })
+  } catch (error) {
+    updateQueueItem(project.id, id, { schedulingState: null, schedulingStartedAt: null, scheduleError: error.message })
+    throw error
+  }
 
   schedLog.step('creating video post on post-bridge...')
-  const post = await createPost(keys.postbridge, {
-    caption,
-    mediaIds: [mediaId],
-    socialAccounts,
-    scheduledAt: mode === 'schedule' ? scheduledAt : null,
-    isDraft: mode !== 'schedule',
-  })
+  updateQueueItem(project.id, id, { schedulingState: 'creating', scheduleAttemptedAt: new Date().toISOString() })
+  let post
+  try {
+    post = await createPost(keys.postbridge, {
+      caption,
+      mediaIds: [mediaId],
+      socialAccounts,
+      scheduledAt: mode === 'schedule' ? scheduledAt : null,
+      isDraft: mode !== 'schedule',
+    })
+  } catch (error) {
+    updateQueueItem(project.id, id, { schedulingState: 'uncertain', scheduleError: error.message })
+    throw new Error(`${error.message} The create response was uncertain; check Postbridge before retrying.`)
+  }
 
   if (id) removeFromQueue(project.id, id)
   schedLog.ok(`Done - video ${mode === 'schedule' ? 'scheduled' : 'saved as draft'}`)
@@ -441,4 +1062,91 @@ app.listen(PORT, HOST, () => {
 })
 }
 
+function withQuality(post, project, context = {}) {
+  return { ...post, qualityReport: runQualityGate(post, { brain: project.brain, ...context }) }
+}
+
+function updateQueueItem(projectId, id, patch) {
+  const next = getQueue(projectId).map((item) => item.id === id ? { ...item, ...patch } : item)
+  setQueue(projectId, next)
+  return next.find((item) => item.id === id) || null
+}
+
+function refreshStalePlanQuality(project, plan) {
+  let changed = false
+  const slots = plan.slots.map((slot) => {
+    if (!slot.post || slot.status === 'removed' || !isQualityStale(slot.post, slot.qualityReport)) return slot
+    const qualityReport = runQualityGate(slot.post, {
+      brain: project.brain,
+      recentHooks: plan.slots.filter((item) => item.id !== slot.id && item.post?.hook).map((item) => item.post.hook),
+    })
+    let status = slot.status
+    let approvedAt = slot.approvedAt
+    let warningsAcknowledgedAt = slot.warningsAcknowledgedAt
+    if (['planned', 'quality_check', 'needs_attention', 'ready_for_review'].includes(status)) {
+      status = plannerStatusForQualityReport(qualityReport)
+      approvedAt = null
+      warningsAcknowledgedAt = null
+    } else if (status === 'approved' && qualityReport.status === 'blocked') {
+      status = 'needs_attention'
+      approvedAt = null
+      warningsAcknowledgedAt = null
+    } else if (status === 'approved' && qualityReport.status === 'warnings' && !warningsAcknowledgedAt) {
+      status = 'ready_for_review'
+      approvedAt = null
+    }
+    changed = true
+    return {
+      ...slot,
+      status,
+      approvedAt,
+      warningsAcknowledgedAt,
+      qualityReport,
+      post: { ...slot.post, qualityReport },
+      updatedAt: new Date().toISOString(),
+    }
+  })
+  if (!changed) return plan
+  const next = { ...plan, slots, updatedAt: new Date().toISOString() }
+  savePlan(project.id, next)
+  return next
+}
+
+function updatePlanSlot(projectId, plan, slotId, patch) {
+  const now = new Date().toISOString()
+  const next = {
+    ...plan,
+    slots: plan.slots.map((slot) => slot.id === slotId ? { ...slot, ...patch, updatedAt: now } : slot),
+    updatedAt: now,
+  }
+  savePlan(projectId, next)
+  return next
+}
+
+async function publishContext({ keys, project, post, socialAccounts, scheduledAt, mode, timezone, postType, renderedMedia, video, videoId, fullCaption }) {
+  const [accounts, existingSlots] = keys.postbridge
+    ? await Promise.all([listAccounts(keys.postbridge), listPostSchedule(keys.postbridge)])
+    : [[], []]
+  const selected = new Set((socialAccounts || []).map(Number))
+  return {
+    brain: project.brain,
+    scheduling: true,
+    mode,
+    scheduledAt,
+    timezone: timezone || 'UTC',
+    socialAccounts,
+    connectedAccountIds: accounts.map((account) => Number(account.id)).filter(Number.isFinite),
+    platforms: accounts.filter((account) => selected.has(Number(account.id))).map((account) => account.platform),
+    postbridgeConfigured: !!keys.postbridge,
+    postType,
+    renderedMedia,
+    mediaCount: postType === 'video' ? 1 : renderedMedia?.length,
+    video,
+    videoId,
+    fullCaption,
+    existingSlots,
+    localPostId: post.id,
+    sourceStatus: post.schedulingState,
+  }
+}
 export default app

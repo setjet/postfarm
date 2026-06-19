@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { X, Loader2, CalendarClock, Info, CheckCircle2, ExternalLink, Film } from 'lucide-react';
-import type { Slideshow, SocialAccount, VideoAsset } from '../types';
+import type { QualityReport as QualityReportType, Slideshow, SocialAccount, VideoAsset } from '../types';
 import { getScheduledPosts, getVideos } from '../lib/api';
 import { Button } from './Button';
 import { SlidePreview } from './SlidePreview';
+import { QualityReport } from './QualityReport';
 
 // Default gap after the last thing already scheduled (or after now, if nothing
 // is queued) so the user isn't forced to pick a time from a blank field.
@@ -32,6 +33,8 @@ interface ScheduleModalProps {
     duration?: number;
     textPosition?: 'center' | 'top';
     watermark?: boolean;
+    timezone?: string;
+    warningsAcknowledged?: boolean;
   }) => Promise<void>;
 }
 
@@ -54,6 +57,8 @@ export function ScheduleModal({ slideshow, accounts, defaults, onClose, onConfir
   const [error, setError] = useState<string | null>(null);
   // Which mode succeeded, or null while still on the form. Drives the success screen.
   const [doneMode, setDoneMode] = useState<'draft' | 'schedule' | null>(null);
+  const [warningsAcknowledged, setWarningsAcknowledged] = useState(false);
+  const [gateReport, setGateReport] = useState<QualityReportType | null>(slideshow.qualityReport || null);
 
   useEffect(() => {
     getScheduledPosts()
@@ -84,6 +89,8 @@ export function ScheduleModal({ slideshow, accounts, defaults, onClose, onConfir
 
   const confirm = async () => {
     setError(null);
+    if (gateReport?.status === 'blocked') return setError('Resolve the blocking Quality Gate findings before publishing.');
+    if (gateReport?.status === 'warnings' && !warningsAcknowledged) return setError('Review and acknowledge the Quality Gate warnings first.');
     if (!selected.length) return setError('Pick at least one account.');
     if (mode === 'schedule' && !when) return setError('Pick a date & time, or save as a draft.');
     if (format === 'video' && !videoId) {
@@ -100,10 +107,14 @@ export function ScheduleModal({ slideshow, accounts, defaults, onClose, onConfir
         duration,
         textPosition,
         watermark,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+        warningsAcknowledged,
       });
       setBusy(false);
       setDoneMode(mode); // show the success screen instead of closing
     } catch (e) {
+      const report = (e as Error & { qualityReport?: QualityReportType }).qualityReport;
+      if (report) setGateReport(report);
       setError(e instanceof Error ? e.message : String(e));
       setBusy(false);
     }
@@ -172,6 +183,13 @@ export function ScheduleModal({ slideshow, accounts, defaults, onClose, onConfir
               ))}
             </div>
             <p className="text-[12px] text-ink-4 mt-2 line-clamp-2">{slideshow.caption}</p>
+            <QualityReport report={gateReport} />
+            {gateReport?.status === 'warnings' && (
+              <label className="mt-3 flex items-start gap-2 rounded-lg border border-warning/25 bg-amber-500/10 p-2.5 text-[11px] leading-relaxed text-ink-3">
+                <input type="checkbox" checked={warningsAcknowledged} onChange={(event) => setWarningsAcknowledged(event.target.checked)} className="mt-0.5" />
+                I reviewed the Quality Gate warnings and want to continue.
+              </label>
+            )}
           </div>
 
           {/* Format */}
@@ -346,7 +364,8 @@ export function ScheduleModal({ slideshow, accounts, defaults, onClose, onConfir
             variant="primary"
             icon={busy ? <Loader2 size={13} className="animate-spin" /> : <CalendarClock size={13} />}
             onClick={confirm}
-            disabled={busy}
+            disabled={busy || gateReport?.status === 'blocked'}
+            aria-disabled={gateReport?.status === 'blocked'}
           >
             {busy
               ? format === 'video'

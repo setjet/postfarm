@@ -15,6 +15,8 @@ const DEFAULT_DIR = process.env.VERCEL ? join(tmpdir(), '.slidesmith') : join(ho
 const DIR = process.env.SLIDESMITH_DIR || DEFAULT_DIR
 const CONFIG_PATH = join(DIR, 'config.json')
 const QUEUE_PATH = join(DIR, 'queue.json')
+const PLANS_PATH = join(DIR, 'plans.json')
+const DISMISSED_POSTS_PATH = join(DIR, 'dismissed-schedule-posts.json')
 
 const DEFAULT_BRAIN = {
   niche: '',
@@ -157,12 +159,23 @@ export function updateProject(id, patch) {
   return writeConfig({ ...c, projects })
 }
 
+export function removeImagePackFromProjects(packId) {
+  const c = getConfig()
+  const projects = c.projects.map((project) => ({
+    ...project,
+    imagePacks: project.imagePacks.filter((selection) => selection !== packId),
+  }))
+  return writeConfig({ ...c, projects })
+}
+
 export function deleteProject(id) {
   const c = getConfig()
   let projects = c.projects.filter((p) => p.id !== id)
   if (!projects.length) projects = [makeProject('Project 1')]
   const activeProjectId = c.activeProjectId === id ? projects[0].id : c.activeProjectId
   removeQueueFor(id)
+  removePlansFor(id)
+  removeDismissedPostsFor(id)
   return writeConfig({ ...c, projects, activeProjectId })
 }
 
@@ -196,10 +209,244 @@ export function addToQueue(projectId, items) {
 export function removeFromQueue(projectId, id) {
   return setQueue(projectId, getQueue(projectId).filter((s) => s.id !== id))
 }
+
+function replaceDeletedImage(post, asset, replacement) {
+  if (!post?.slides?.length) return { post, changed: false }
+  let changed = false
+  const slides = post.slides.map((slide) => {
+    if (slide.imageAssetId !== asset.id && slide.imageUrl !== asset.url) return slide
+    changed = true
+    return replacement
+      ? {
+          ...slide,
+          imageUrl: replacement.url,
+          imageAssetId: replacement.id,
+          imageFolderId: replacement.folderId,
+          imageUnavailable: false,
+        }
+      : {
+          ...slide,
+          imageUrl: undefined,
+          imageAssetId: undefined,
+          imageFolderId: asset.folderId || slide.imageFolderId,
+          imageUnavailable: true,
+        }
+  })
+  if (!changed) return { post, changed: false }
+  const unavailable = slides.some((slide) => slide.imageUnavailable)
+  return {
+    changed: true,
+    post: {
+      ...post,
+      slides,
+      mediaUnavailable: unavailable,
+      mediaError: unavailable
+        ? 'A Library background used by this draft was deleted. Choose another background from the same folder or regenerate it.'
+        : undefined,
+      qualityReport: null,
+      qualityInvalidatedAt: new Date().toISOString(),
+    },
+  }
+}
+
+// Remove persistent references after the managed file and Library record have
+// been deleted. Unfinished drafts are either moved to a live asset from the
+// same folder or marked unavailable; already scheduled posts are untouched.
+export function invalidateLibraryAssetReferences(asset, replacement = null) {
+  const queueMap = readQueueMap()
+  let queueChanged = false
+  if (asset.type === 'image') {
+    for (const [projectId, items] of Object.entries(queueMap)) {
+      queueMap[projectId] = (items || []).map((post) => {
+        const result = replaceDeletedImage(post, asset, replacement)
+        if (result.changed) queueChanged = true
+        return result.post
+      })
+    }
+  }
+  if (queueChanged) writeQueueMap(queueMap)
+
+  const planMap = readPlanMap()
+  let plansChanged = false
+  const now = new Date().toISOString()
+  for (const [projectId, plans] of Object.entries(planMap)) {
+    planMap[projectId] = (plans || []).map((plan) => {
+      let planChanged = false
+      let config = plan.config
+      if (asset.type === 'video' && config?.videoId === asset.id) {
+        config = { ...config, videoId: replacement?.id || null }
+        planChanged = true
+      }
+      const slots = (plan.slots || []).map((slot) => {
+        if (slot.status === 'scheduled') return slot
+        if (asset.type === 'image') {
+          const result = replaceDeletedImage(slot.post, asset, replacement)
+          if (!result.changed) return slot
+          planChanged = true
+          return {
+            ...slot,
+            post: result.post,
+            qualityReport: null,
+            approvedAt: null,
+            status: replacement ? 'needs_attention' : 'failed',
+            error: replacement
+              ? 'A deleted Library background was replaced from the same folder. Review this post again.'
+              : 'A Library background used by this post was deleted. Add an image to the selected folder or regenerate this post.',
+            updatedAt: now,
+          }
+        }
+        if (asset.type === 'video' && plan.config?.videoId === asset.id && slot.format === 'video') {
+          planChanged = true
+          return {
+            ...slot,
+            approvedAt: null,
+            status: replacement ? 'needs_attention' : 'failed',
+            error: replacement
+              ? 'The deleted video was replaced from the same folder. Review this post again.'
+              : 'The selected background video was deleted. Choose another video before scheduling.',
+            updatedAt: now,
+          }
+        }
+        return slot
+      })
+      if (!planChanged) return plan
+      plansChanged = true
+      return { ...plan, config, slots, updatedAt: now }
+    })
+  }
+  if (plansChanged) writePlanMap(planMap)
+  return { queueChanged, plansChanged }
+}
 function removeQueueFor(projectId) {
   const m = readQueueMap()
   delete m[projectId]
   writeQueueMap(m)
+}
+
+// ── Content plans (per project) ─────────────────────────────────────────────
+function readPlanMap() {
+  const value = readJson(PLANS_PATH, {})
+  return value && !Array.isArray(value) ? value : {}
+}
+
+function writePlanMap(value) {
+  writeJson(PLANS_PATH, value)
+  return value
+}
+
+function recoverInterruptedPlan(plan) {
+  let changed = false
+  const slots = (plan.slots || []).map((slot) => {
+    if (['generating', 'quality_check'].includes(slot.status)) {
+      changed = true
+      return { ...slot, status: 'failed', error: 'Interrupted by an app restart. Retry this item.' }
+    }
+    if (slot.status === 'scheduling') {
+      changed = true
+      return {
+        ...slot,
+        status: 'failed',
+        scheduleUncertain: true,
+        error: 'Scheduling was interrupted. Check Postbridge before retrying to avoid a duplicate.',
+      }
+    }
+    return slot
+  })
+  return { plan: changed ? { ...plan, slots, updatedAt: new Date().toISOString() } : plan, changed }
+}
+
+let interruptedPlansRecovered = false
+
+export function getPlans(projectId) {
+  const map = readPlanMap()
+  if (!interruptedPlansRecovered) {
+    let changed = false
+    for (const [id, plans] of Object.entries(map)) {
+      const recovered = (plans || []).map(recoverInterruptedPlan)
+      if (recovered.some((item) => item.changed)) changed = true
+      map[id] = recovered.map((item) => item.plan)
+    }
+    interruptedPlansRecovered = true
+    if (changed) writePlanMap(map)
+  }
+  return map[projectId] || []
+}
+
+export function getPlan(projectId, planId) {
+  return getPlans(projectId).find((plan) => plan.id === planId) || null
+}
+
+export function savePlan(projectId, plan) {
+  const map = readPlanMap()
+  const plans = map[projectId] || []
+  const index = plans.findIndex((item) => item.id === plan.id)
+  if (index >= 0) plans[index] = plan
+  else plans.unshift(plan)
+  map[projectId] = plans
+  writePlanMap(map)
+  return plan
+}
+
+export function deletePlan(projectId, planId) {
+  const map = readPlanMap()
+  map[projectId] = (map[projectId] || []).filter((plan) => plan.id !== planId)
+  writePlanMap(map)
+  return map[projectId]
+}
+
+function removePlansFor(projectId) {
+  const map = readPlanMap()
+  delete map[projectId]
+  writePlanMap(map)
+}
+
+// Published posts hidden from the local Schedule view. These IDs are never sent
+// to Postbridge as deletions and do not affect Results or Learning Memory.
+function readDismissedPostMap() {
+  const value = readJson(DISMISSED_POSTS_PATH, {})
+  return value && !Array.isArray(value) ? value : {}
+}
+
+function writeDismissedPostMap(value) {
+  writeJson(DISMISSED_POSTS_PATH, value)
+  return value
+}
+
+export function getDismissedPublishedPostIds(projectId) {
+  const ids = readDismissedPostMap()[projectId]
+  return [...new Set((Array.isArray(ids) ? ids : []).map(String).filter(Boolean))]
+}
+
+export function dismissPublishedPost(projectId, postId) {
+  const map = readDismissedPostMap()
+  map[projectId] = [...new Set([...(map[projectId] || []).map(String), String(postId)])]
+  writeDismissedPostMap(map)
+  return map[projectId]
+}
+
+export function restorePublishedPost(projectId, postId) {
+  const map = readDismissedPostMap()
+  map[projectId] = (map[projectId] || []).map(String).filter((id) => id !== String(postId))
+  writeDismissedPostMap(map)
+  return map[projectId]
+}
+
+export function reconcileDismissedPublishedPosts(projectId, remotePostIds) {
+  const existing = new Set((remotePostIds || []).map(String))
+  const map = readDismissedPostMap()
+  const current = (map[projectId] || []).map(String)
+  const next = [...new Set(current.filter((id) => existing.has(id)))]
+  if (next.length !== current.length) {
+    map[projectId] = next
+    writeDismissedPostMap(map)
+  }
+  return next
+}
+
+function removeDismissedPostsFor(projectId) {
+  const map = readDismissedPostMap()
+  delete map[projectId]
+  writeDismissedPostMap(map)
 }
 
 export const CONFIG_DIR = DIR

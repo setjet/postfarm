@@ -65,22 +65,37 @@ export async function listAccounts(token) {
   return body?.data || []
 }
 
-// Build a { media_id → url } map for the given posts in ONE call. post-bridge's
-// media URLs live nested at media.object.url (MediaDto), and a post's `media`
-// field can come back as bare media-id strings — so we resolve them here.
-async function mediaUrlMapForPosts(token, postIds) {
-  if (!postIds.length) return {}
+// Build a media-id map for active posts. Postbridge's media URLs live at
+// media.object.url, while posts can contain only bare media IDs.
+async function mediaInfoMapForPosts(token, posts, allMedia = false) {
+  const wanted = new Set(posts
+    .filter((post) => post?.is_draft || post?.status === 'scheduled')
+    .flatMap((post) => {
+      const ids = Array.isArray(post.media) ? post.media.filter((item) => typeof item === 'string') : []
+      return allMedia ? ids : ids.slice(0, 1)
+    }))
+  if (!wanted.size) return {}
   try {
-    const qs = postIds.map((id) => `post_id=${encodeURIComponent(id)}`).join('&')
-    const body = await pb(token, `/v1/media?limit=200&${qs}`)
     const map = {}
-    for (const m of body?.data || []) {
-      const url = m?.object?.url
-      if (m?.id && url) map[m.id] = url
-    }
+    // Collection results intentionally omit signed URLs, so retrieve active
+    // scheduled/draft assets by ID. Calls still pass through the shared queue.
+    await Promise.all([...wanted].map(async (id) => {
+      try {
+        const m = await pb(token, `/v1/media/${encodeURIComponent(id)}`)
+        const url = m?.object?.url
+        if (url) map[id] = {
+          url,
+          mimeType: m.mime_type || null,
+          duration: Number(m.duration ?? m.object?.duration) || null,
+        }
+      } catch {
+        // A single expired/deleted asset should not hide the rest of the post.
+      }
+    }))
     return map
-  } catch {
+  } catch (error) {
     // Thumbnails are best-effort — never block the posts list on a media fetch.
+    console.warn('[post-bridge] media previews unavailable:', error?.message || error)
     return {}
   }
 }
@@ -88,18 +103,72 @@ async function mediaUrlMapForPosts(token, postIds) {
 export async function listPosts(token) {
   const body = await pb(token, '/v1/posts?limit=100')
   const posts = body?.data || []
-  const urlById = await mediaUrlMapForPosts(token, posts.map((p) => p.id).filter(Boolean))
+  const infoById = await mediaInfoMapForPosts(token, posts)
 
   // Normalise each post's media (id-string | {url} | MediaDto) → plain URL list.
-  const toUrl = (m) => {
-    if (!m) return ''
-    if (typeof m === 'string') return urlById[m] || ''
-    return m.object?.url || m.url || urlById[m.id] || ''
+  const toInfo = (m) => {
+    if (!m) return null
+    if (typeof m === 'string') return infoById[m] || null
+    const fallback = infoById[m.id] || {}
+    const url = m.object?.url || m.url || fallback.url || ''
+    return url ? {
+      url,
+      mimeType: m.mime_type || m.mimeType || fallback.mimeType || null,
+      duration: Number(m.duration ?? m.object?.duration ?? fallback.duration) || null,
+    } : null
   }
   for (const p of posts) {
-    p.media_urls = (Array.isArray(p.media) ? p.media : []).map(toUrl).filter(Boolean)
+    p.media_items = (Array.isArray(p.media) ? p.media : []).map(toInfo).filter(Boolean)
+    p.media_urls = p.media_items.map((m) => m.url)
+    p.media_count = Array.isArray(p.media) ? p.media.length : p.media_items.length
   }
   return posts
+}
+
+// Lightweight schedule data for conflict checks. This deliberately avoids the
+// signed-media resolution used by the Schedule UI.
+export async function listPostSchedule(token) {
+  const body = await pb(token, '/v1/posts?limit=100')
+  const posts = body?.data || []
+  return posts.map((post) => ({
+    id: post.id,
+    status: post.is_draft ? 'draft' : post.status,
+    scheduledAt: post.scheduled_at || null,
+    socialAccounts: Array.isArray(post.social_accounts) ? post.social_accounts.map(Number).filter(Number.isFinite) : [],
+  }))
+}
+
+export async function getPost(token, id) {
+  return pb(token, `/v1/posts/${encodeURIComponent(id)}`)
+}
+
+export async function getPostMedia(token, id) {
+  const post = await getPost(token, id)
+  const infoById = await mediaInfoMapForPosts(token, [post], true)
+  return (Array.isArray(post?.media) ? post.media : []).map((media) => {
+    if (!media) return null
+    if (typeof media === 'string') return infoById[media] || null
+    const fallback = infoById[media.id] || {}
+    const url = media.object?.url || media.url || fallback.url || ''
+    return url ? {
+      url,
+      mimeType: media.mime_type || media.mimeType || fallback.mimeType || null,
+      duration: Number(media.duration ?? media.object?.duration ?? fallback.duration) || null,
+    } : null
+  }).filter(Boolean)
+}
+
+// Update only the remote schedule. Omitting every other UpdatePostDto field
+// prevents accidental content/account changes and never uploads duplicate media.
+export async function updatePostSchedule(token, id, scheduledAt) {
+  return pb(token, `/v1/posts/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ scheduled_at: scheduledAt }),
+  })
+}
+
+export async function deletePost(token, id) {
+  return pb(token, `/v1/posts/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
 export async function listAnalytics(token) {

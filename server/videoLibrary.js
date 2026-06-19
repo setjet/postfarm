@@ -2,7 +2,7 @@
 // but keeps video records and files completely separate so carousel/image
 // workflows remain untouched.
 import { homedir, tmpdir } from 'node:os'
-import { join, extname } from 'node:path'
+import { join, extname, basename, dirname, resolve } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { randomUUID } from 'node:crypto'
@@ -43,6 +43,22 @@ function videoIndex() {
   return readJson(INDEX_PATH, [])
 }
 
+function managedMediaPath(file) {
+  const name = typeof file === 'string' ? file : ''
+  if (!name || basename(name) !== name || !isVideoFile(name)) return null
+  const root = resolve(MEDIA_DIR)
+  const path = resolve(root, name)
+  return dirname(path) === root ? path : null
+}
+
+function validateVideoId(id) {
+  if (typeof id !== 'string' || !id || id.length > 240 || /[\\/\0]/.test(id)) {
+    const error = new Error('Invalid video asset ID.')
+    error.status = 400
+    throw error
+  }
+}
+
 function publicRecord(rec) {
   return {
     id: rec.id,
@@ -63,7 +79,7 @@ function isVideoFile(file) {
 function reconcileOrphans() {
   const index = videoIndex()
   if (!existsSync(MEDIA_DIR)) return index
-  const known = new Set(index.map((s) => s.file))
+  const known = new Set(index.map((s) => basename(String(s.file || ''))).filter(Boolean))
   let changed = false
   for (const file of readdirSync(MEDIA_DIR)) {
     if (!isVideoFile(file) || known.has(file)) continue
@@ -84,24 +100,44 @@ function reconcileOrphans() {
 
 export function listVideos() {
   return reconcileOrphans()
-    .filter((rec) => rec.file && existsSync(join(MEDIA_DIR, rec.file)))
+    .filter((rec) => {
+      const path = managedMediaPath(rec.file)
+      return path && existsSync(path)
+    })
     .map(publicRecord)
 }
 
 export function getVideoFile(id) {
+  validateVideoId(id)
   const rec = videoIndex().find((s) => s.id === id)
   if (!rec) return null
-  const p = join(MEDIA_DIR, rec.file)
+  const p = managedMediaPath(rec.file)
+  if (!p) return null
   return existsSync(p) ? p : null
 }
 
+export function getVideoAsset(id) {
+  validateVideoId(id)
+  const rec = videoIndex().find((item) => item.id === id)
+  if (!rec) {
+    const error = new Error('Video asset not found.')
+    error.status = 404
+    throw error
+  }
+  return publicRecord(rec)
+}
+
 export function removeVideo(id) {
+  validateVideoId(id)
   const index = videoIndex()
   const rec = index.find((s) => s.id === id)
-  if (rec) {
-    const p = join(MEDIA_DIR, rec.file)
-    if (existsSync(p)) rmSync(p)
+  if (!rec) {
+    const error = new Error('Video asset not found.')
+    error.status = 404
+    throw error
   }
+  const p = managedMediaPath(rec.file)
+  if (p && existsSync(p)) rmSync(p)
   writeJson(INDEX_PATH, index.filter((s) => s.id !== id))
   return listVideos()
 }

@@ -3,12 +3,12 @@
 // images are downloaded to ~/.slidesmith/library/ so the browser can composite
 // them onto the export canvas same-origin (remote URLs would taint it).
 import { homedir, tmpdir } from 'node:os'
-import { join, dirname, extname } from 'node:path'
+import { join, dirname, extname, basename, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, rmSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { logger } from './log.js'
-import { BUNDLED_FOLDER_ID, UNCATEGORIZED_FOLDER_ID, safeFolderId } from './folders.js'
+import { BUNDLED_FOLDER_ID, UNCATEGORIZED_FOLDER_ID, listFolders, safeFolderId } from './folders.js'
 
 const log = logger('scrape')
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -56,13 +56,45 @@ function scrapedIndex() {
   return readJson(INDEX_PATH, [])
 }
 
+function managedMediaPath(file) {
+  const name = typeof file === 'string' ? file : ''
+  if (!name || basename(name) !== name || !/\.(jpe?g|png|webp)$/i.test(name)) return null
+  const root = resolve(MEDIA_DIR)
+  const path = resolve(root, name)
+  return dirname(path) === root ? path : null
+}
+
+function assetUrl(id) {
+  return `/api/library/img/${encodeURIComponent(id)}`
+}
+
+function publicRecord(rec) {
+  return {
+    id: rec.id,
+    url: assetUrl(rec.id),
+    pack: rec.pack || 'Scraped',
+    source: rec.source || 'scraped',
+    folderId: rec.folderId || UNCATEGORIZED_FOLDER_ID,
+    addedAt: rec.addedAt || null,
+    originalName: rec.originalName || null,
+  }
+}
+
+function validateManagedAssetId(id) {
+  if (typeof id !== 'string' || !id || id.length > 240 || /[\\/\0]/.test(id)) {
+    const error = new Error('Invalid Library asset ID.')
+    error.status = 400
+    throw error
+  }
+}
+
 // Recover image files on disk that aren't in the index (e.g. if the index was
 // emptied or drifted). Re-indexes them with stable ids matching the original
 // scheme so nothing is silently orphaned.
 function reconcileOrphans() {
   const index = scrapedIndex()
   if (!existsSync(MEDIA_DIR)) return index
-  const known = new Set(index.map((s) => s.file))
+  const known = new Set(index.map((s) => basename(String(s.file || ''))).filter(Boolean))
   let changed = false
   for (const file of readdirSync(MEDIA_DIR)) {
     if (!/\.(jpe?g|png|webp)$/i.test(file) || known.has(file)) continue
@@ -85,49 +117,185 @@ export function listLibrary() {
   // thumbnails / 404s if the index and files ever drift apart. Reconcile first
   // so any orphaned files on disk are picked back up.
   const scraped = reconcileOrphans()
-    .filter((s) => existsSync(join(MEDIA_DIR, s.file)))
-    .map((s) => ({
-      id: s.id,
-      url: `/api/library/img/${encodeURIComponent(s.id)}`,
-      pack: s.pack || 'Scraped',
-      source: s.source || 'scraped',
-      folderId: s.folderId || UNCATEGORIZED_FOLDER_ID,
-      addedAt: s.addedAt || null,
-      originalName: s.originalName || null,
-    }))
+    .filter((s) => {
+      const path = managedMediaPath(s.file)
+      return path && existsSync(path)
+    })
+    .map(publicRecord)
   // Scraped first (newest), then the bundled packs.
   return [...scraped, ...bundled()]
 }
 
-// Group the library into packs with a few cover thumbnails each (for the
-// pack-picker UIs in Generate + Settings).
+// Build selectable background packs. Bundled packs retain their existing names
+// as ids for backwards-compatible project settings; user Library packs use
+// stable folder ids so folder renames never break a saved selection.
 export function listPacks() {
-  const map = new Map()
-  for (const img of listLibrary()) {
-    if (!map.has(img.pack)) map.set(img.pack, { name: img.pack, source: img.source, count: 0, covers: [] })
-    const p = map.get(img.pack)
-    p.count++
-    if (p.covers.length < 4) p.covers.push(img.url)
+  const images = listLibrary()
+  const bundledPacks = new Map()
+  for (const img of images.filter((item) => item.source === 'bundled')) {
+    if (!bundledPacks.has(img.pack)) {
+      bundledPacks.set(img.pack, { id: img.pack, name: img.pack, source: 'bundled', count: 0, covers: [] })
+    }
+    const pack = bundledPacks.get(img.pack)
+    pack.count++
+    if (pack.covers.length < 4) pack.covers.push(img.url)
   }
-  return [...map.values()]
+
+  const libraryImages = images.filter((item) => item.source !== 'bundled')
+  const libraryPacks = listFolders()
+    .filter((folder) => folder.id !== BUNDLED_FOLDER_ID)
+    .map((folder) => {
+      const folderImages = libraryImages.filter((image) => image.folderId === folder.id)
+      return {
+        id: folder.id,
+        name: folder.name,
+        source: 'library',
+        count: folderImages.length,
+        covers: folderImages.slice(0, 4).map((image) => image.url),
+      }
+    })
+
+  return [...libraryPacks, ...bundledPacks.values()]
+}
+
+// Resolve selections against the live Library at generation time. Only usable
+// asset URLs reach the renderer, never ids or stale thumbnail references.
+export function resolveBackgroundSelection(selections, legacyFolderIds = []) {
+  const requested = [...new Set([
+    ...(Array.isArray(selections) ? selections : []),
+    ...(Array.isArray(legacyFolderIds) ? legacyFolderIds : []),
+  ].filter((value) => typeof value === 'string' && value))]
+  if (!requested.length) return []
+
+  const images = listLibrary()
+  const folderMap = new Map(listFolders().map((folder) => [folder.id, folder]))
+  const pool = []
+
+  for (const selection of requested) {
+    if (selection.startsWith('folder:')) {
+      const folder = folderMap.get(selection)
+      if (!folder || selection === BUNDLED_FOLDER_ID) {
+        throw new Error('A selected Library folder no longer exists. Choose another background pack.')
+      }
+      const matches = images.filter((image) => image.source !== 'bundled' && image.folderId === selection)
+      if (!matches.length) {
+        throw new Error(`“${folder.name}” has no usable images. Add a JPG, JPEG, PNG, or WebP image, or choose another pack.`)
+      }
+      pool.push(...matches)
+      continue
+    }
+
+    // Non-folder selections are bundled pack ids only. Imported media must be
+    // selected through its stable folder id; accepting display/legacy pack
+    // names here would let an unselected folder leak into the pool.
+    const isBundledPack = bundledPackNames().includes(selection)
+    const matches = isBundledPack
+      ? images.filter((image) => image.source === 'bundled' && image.pack === selection)
+      : []
+    if (!matches.length) {
+      throw new Error(`The background pack “${selection}” is no longer available. Choose another pack.`)
+    }
+    pool.push(...matches)
+  }
+
+  return [...new Map(pool.map((image) => [image.id, image])).values()]
+}
+
+function shuffle(items, random) {
+  const copy = [...items]
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1))
+    ;[copy[i], copy[j]] = [copy[j], copy[i]]
+  }
+  return copy
+}
+
+// Exhaust every image before starting a fresh shuffled cycle. Avoid an
+// immediate repeat at cycle boundaries whenever more than one image exists.
+export function createBackgroundPicker(images, random = Math.random) {
+  let cycle = []
+  let lastUrl = null
+  return () => {
+    if (!cycle.length) {
+      cycle = shuffle(images, random)
+      if (cycle.length > 1 && cycle[0].url === lastUrl) {
+        ;[cycle[0], cycle[1]] = [cycle[1], cycle[0]]
+      }
+    }
+    const next = cycle.shift()
+    lastUrl = next?.url || null
+    return next
+  }
+}
+
+export function assignBackgrounds(slideshows, images, random = Math.random) {
+  if (!images.length) return slideshows
+  const nextBackground = createBackgroundPicker(images, random)
+  for (const show of slideshows) {
+    const slidesToAssign = show.format === 'notes' ? show.slides.slice(0, 1) : show.slides
+    for (const slide of slidesToAssign) {
+      const asset = nextBackground()
+      slide.imageUrl = asset.url
+      slide.imageAssetId = asset.id
+      slide.imageFolderId = asset.folderId
+      slide.imageUnavailable = false
+    }
+  }
+  return slideshows
 }
 
 export function getScrapedFile(id) {
+  validateManagedAssetId(id)
   const rec = scrapedIndex().find((s) => s.id === id)
   if (!rec) return null
-  const p = join(MEDIA_DIR, rec.file)
+  const p = managedMediaPath(rec.file)
+  if (!p) return null
   return existsSync(p) ? p : null
 }
 
+export function getLibraryAsset(id) {
+  validateManagedAssetId(id)
+  const rec = scrapedIndex().find((item) => item.id === id)
+  if (!rec) {
+    const error = new Error('Library asset not found.')
+    error.status = 404
+    throw error
+  }
+  return publicRecord(rec)
+}
+
+export function assertPostAssetsAvailable(post) {
+  const liveIds = new Set(listLibrary().map((asset) => asset.id))
+  for (const slide of post?.slides || []) {
+    if (slide.imageUnavailable) throw new Error('A background used by this draft was deleted. Choose another background before publishing.')
+    let id = slide.imageAssetId
+    if (!id && typeof slide.imageUrl === 'string') {
+      const match = slide.imageUrl.match(/^\/api\/library\/img\/([^/?#]+)/)
+      if (match) {
+        try { id = decodeURIComponent(match[1]) } catch { id = match[1] }
+      }
+    }
+    if (id && !liveIds.has(id)) {
+      throw new Error('A background used by this draft is no longer available. Choose another background before publishing.')
+    }
+  }
+  return true
+}
+
 export function removeScraped(id) {
+  validateManagedAssetId(id)
   const index = scrapedIndex()
   const rec = index.find((s) => s.id === id)
+  if (!rec) {
+    const error = new Error('Library asset not found.')
+    error.status = 404
+    throw error
+  }
   // Delete the actual file too — otherwise reconcileOrphans() sees an
   // un-indexed file on disk and immediately re-adds it ("zombie" delete).
-  if (rec) {
-    const p = join(MEDIA_DIR, rec.file)
-    if (existsSync(p)) rmSync(p)
-  }
+  // Invalid indexed paths are treated as stale metadata and are never touched.
+  const p = managedMediaPath(rec.file)
+  if (p && existsSync(p)) rmSync(p)
   writeJson(INDEX_PATH, index.filter((s) => s.id !== id))
   return listLibrary()
 }

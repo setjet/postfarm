@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { X, Loader2, ChevronLeft, ChevronRight, Trash2, Shuffle, Image as ImageIcon } from 'lucide-react';
+import { X, Loader2, Trash2, Shuffle, Image as ImageIcon } from 'lucide-react';
 import type { Slideshow, Slide, LibraryImage, NotesData } from '../types';
 import { Button } from './Button';
-import { SlidePreview } from './SlidePreview';
+import { PostPreviewStage } from './PostPreviewModal';
 import { getLibrary } from '../lib/api';
 import { normalizeHashtags } from '../lib/hashtags';
 
@@ -82,7 +82,16 @@ export function SlideshowEditorModal({ slideshow, onClose, onSave }: SlideshowEd
   const shuffleBackgrounds = () => {
     const pool = filtered;
     if (!pool.length) return;
-    setSlides((prev) => prev.map((s) => ({ ...s, imageUrl: pool[Math.floor(Math.random() * pool.length)].url })));
+    setSlides((prev) => prev.map((s) => {
+      const asset = pool[Math.floor(Math.random() * pool.length)];
+      return {
+        ...s,
+        imageUrl: asset.url,
+        imageAssetId: asset.id,
+        imageFolderId: asset.folderId,
+        imageUnavailable: false,
+      };
+    }));
   };
 
   const deleteSlide = () => {
@@ -114,44 +123,7 @@ export function SlideshowEditorModal({ slideshow, onClose, onSave }: SlideshowEd
         onClick={(e) => e.stopPropagation()}
       >
         {/* Preview */}
-        <div className="sm:flex-1 bg-[#101010] flex flex-col items-center justify-center p-6 gap-3 min-w-0">
-          <div className="h-[calc(96vh-8.5rem)] max-h-[860px] max-w-full aspect-[9/16]">
-            <SlidePreview
-              slide={current}
-              className="w-full h-full"
-              format={slideshow.format}
-              notesData={notesData}
-              slideIndex={index}
-            />
-          </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setIndex((i) => Math.max(0, i - 1))}
-              disabled={index === 0}
-              className="w-9 h-9 rounded-lg bg-control border border-line text-ink-4 shadow-main hover:text-ink disabled:opacity-30 flex items-center justify-center"
-            >
-              <ChevronLeft size={16} />
-            </button>
-            <div className="flex gap-1.5">
-              {slides.map((_, i) => (
-                <button
-                  key={i}
-                  onClick={() => setIndex(i)}
-                  className={`h-1.5 rounded-full transition-all ${i === index ? 'w-5 bg-accent' : 'w-1.5 bg-line-2'}`}
-                  aria-label={`Slide ${i + 1}`}
-                />
-              ))}
-            </div>
-            <button
-              onClick={() => setIndex((i) => Math.min(total - 1, i + 1))}
-              disabled={index === total - 1}
-              className="w-9 h-9 rounded-lg bg-control border border-line text-ink-4 shadow-main hover:text-ink disabled:opacity-30 flex items-center justify-center"
-            >
-              <ChevronRight size={16} />
-            </button>
-          </div>
-          <span className="text-[11px] text-ink-6 tabular-nums">{index + 1} / {total}</span>
-        </div>
+        <PostPreviewStage slideshow={{ ...slideshow, slides, notesData }} index={index} onIndexChange={setIndex} />
 
         {/* Editor panel */}
         <div className="w-full sm:w-96 flex flex-col border-t sm:border-t-0 sm:border-l border-line min-h-0">
@@ -301,7 +273,7 @@ export function SlideshowEditorModal({ slideshow, onClose, onSave }: SlideshowEd
                     </div>
                   </div>
                   <div className="flex items-center gap-2 mb-2">
-                    <Button variant="ghost" size="sm" icon={<ImageIcon size={12} />} onClick={() => patchSlide({ imageUrl: undefined })}>
+                    <Button variant="ghost" size="sm" icon={<ImageIcon size={12} />} onClick={() => patchSlide({ imageUrl: undefined, imageAssetId: undefined, imageFolderId: undefined, imageUnavailable: false })}>
                       Gradient
                     </Button>
                     <Button variant="ghost" size="sm" icon={<Shuffle size={12} />} onClick={shuffleBackgrounds}>
@@ -317,7 +289,7 @@ export function SlideshowEditorModal({ slideshow, onClose, onSave }: SlideshowEd
                       {filtered.map((img) => (
                         <button
                           key={img.id}
-                          onClick={() => patchSlide({ imageUrl: img.url })}
+                          onClick={() => patchSlide({ imageUrl: img.url, imageAssetId: img.id, imageFolderId: img.folderId, imageUnavailable: false })}
                           className={`aspect-[9/16] rounded-md overflow-hidden bg-raised transition-all ${
                             current.imageUrl === img.url ? 'ring-2 ring-accent' : 'hover:ring-2 hover:ring-line-2'
                           }`}

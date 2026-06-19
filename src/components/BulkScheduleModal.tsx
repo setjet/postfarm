@@ -34,6 +34,9 @@ export function BulkScheduleModal({ slideshows, accounts, defaults, onClose, onD
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [doneCount, setDoneCount] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [warningsAcknowledged, setWarningsAcknowledged] = useState(false);
+  const blockedCount = slideshows.filter((show) => show.qualityReport?.status === 'blocked').length;
+  const warningCount = slideshows.filter((show) => show.qualityReport?.status === 'warnings').length;
 
   // Default the start time to AFTER the last thing already scheduled in post-bridge.
   useEffect(() => {
@@ -66,6 +69,8 @@ export function BulkScheduleModal({ slideshows, accounts, defaults, onClose, onD
 
   const submit = async () => {
     setError(null);
+    if (blockedCount) return setError(`${blockedCount} selected post${blockedCount === 1 ? ' has' : 's have'} blocking Quality Gate findings.`);
+    if (!warningsAcknowledged) return setError('Review the Quality Gate reports and acknowledge publish-time platform warnings before bulk scheduling.');
     if (!selectedAccounts.length) return setError('Pick at least one account.');
     if (mode === 'schedule') {
       const start = new Date(startLocal).getTime();
@@ -87,6 +92,7 @@ export function BulkScheduleModal({ slideshows, accounts, defaults, onClose, onD
     let ok = 0;
     let done = 0;
     let next = 0;
+    const failures: string[] = [];
 
     const worker = async () => {
       while (next < slideshows.length) {
@@ -102,16 +108,20 @@ export function BulkScheduleModal({ slideshows, accounts, defaults, onClose, onD
             socialAccounts: selectedAccounts,
             scheduledAt: mode === 'schedule' ? new Date(startMs + i * stepMs).toISOString() : null,
             mode,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+            warningsAcknowledged,
           });
           ok++;
         } catch (e) {
           console.error('[bulk] failed for', show.id, e);
+          failures.push(e instanceof Error ? e.message : String(e));
         }
         setProgress({ done: ++done, total: slideshows.length });
       }
     };
 
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, slideshows.length) }, worker));
+    if (failures.length) setError(`${failures.length} post${failures.length === 1 ? '' : 's'} failed. ${failures[0]}`);
     setDoneCount(ok);
   };
 
@@ -132,6 +142,7 @@ export function BulkScheduleModal({ slideshows, accounts, defaults, onClose, onD
             <p className="text-[12px] text-ink-5">
               {mode === 'schedule' ? 'post-bridge will publish them at their times.' : 'Find them in your post-bridge drafts.'}
             </p>
+            {error && <p className="rounded-lg bg-red-500/10 px-3 py-2 text-[11px] text-danger">{error}</p>}
             <a
               href={mode === 'schedule' ? PB_SCHEDULED_URL : PB_DRAFTS_URL}
               target="_blank"
@@ -212,6 +223,11 @@ export function BulkScheduleModal({ slideshows, accounts, defaults, onClose, onD
               </div>
             )}
 
+            {blockedCount > 0 && <p className="rounded-lg bg-red-500/10 px-3 py-2 text-[11px] text-danger">{blockedCount} blocked post{blockedCount === 1 ? '' : 's'} cannot be published.</p>}
+            <label className="flex items-start gap-2 rounded-lg border border-warning/25 bg-amber-500/10 p-2.5 text-[11px] text-ink-3">
+              <input type="checkbox" checked={warningsAcknowledged} onChange={(event) => setWarningsAcknowledged(event.target.checked)} />
+              I reviewed the Quality Gate reports{warningCount ? `, including warnings on ${warningCount} post${warningCount === 1 ? '' : 's'},` : ''} and acknowledge any platform-specific warnings found at publish time.
+            </label>
             {error && <p className="text-[12px] text-danger">{error}</p>}
             {progress && <p className="text-[12px] text-ink-5 flex items-center gap-2"><Loader2 size={13} className="animate-spin" /> Uploading {progress.done} / {progress.total}…</p>}
           </div>
@@ -227,7 +243,7 @@ export function BulkScheduleModal({ slideshows, accounts, defaults, onClose, onD
                 variant="primary"
                 icon={busy ? <Loader2 size={13} className="animate-spin" /> : <CalendarClock size={13} />}
                 onClick={submit}
-                disabled={busy}
+                disabled={busy || blockedCount > 0}
               >
                 {busy ? 'Scheduling…' : mode === 'schedule' ? `Schedule ${slideshows.length}` : `Draft ${slideshows.length}`}
               </Button>

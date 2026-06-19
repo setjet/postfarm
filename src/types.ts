@@ -1,4 +1,4 @@
-export type ViewKey = 'queue' | 'trends' | 'library' | 'schedule' | 'results' | 'brain' | 'settings';
+export type ViewKey = 'queue' | 'trends' | 'library' | 'schedule' | 'results' | 'learning' | 'brain' | 'settings';
 
 export interface Slide {
   id: string;
@@ -6,6 +6,9 @@ export interface Slide {
   // Generated slides have no source image — they're rendered from text over a
   // gradient. `imageUrl` is kept optional for backwards-compat / future use.
   imageUrl?: string;
+  imageAssetId?: string;
+  imageFolderId?: string;
+  imageUnavailable?: boolean;
   bgFrom?: string;
   bgTo?: string;
 }
@@ -31,6 +34,103 @@ export interface Slideshow {
   ctaKeyword?: string;
   topicMode?: 'general' | 'custom';
   topic?: string;
+  generationNotes?: string;
+  productEmphasis?: string;
+  plannerFormat?: PlannerFormat;
+  plannerSlotId?: string;
+  qualityReport?: QualityReport | null;
+  qualityInvalidatedAt?: string;
+  mediaUnavailable?: boolean;
+  mediaError?: string;
+  schedulingState?: 'preflight' | 'rendering' | 'uploading' | 'creating' | 'uncertain' | null;
+}
+
+export type QualitySeverity = 'blocking' | 'warning';
+
+export interface QualityFinding {
+  id: string;
+  check: string;
+  severity: QualitySeverity;
+  explanation: string;
+  field: string;
+  suggestion: string;
+  slideIndex?: number;
+  fix?: 'safe';
+}
+
+export interface QualityReport {
+  version: number;
+  contentVersion: string;
+  checkedAt: string;
+  status: 'passed' | 'warnings' | 'blocked';
+  score: number;
+  summary: { blocking: number; warnings: number; passed: number };
+  findings: QualityFinding[];
+}
+
+export type PlannerFormat = 'standard' | 'notes' | 'image' | 'video';
+export type PlannerSlotStatus =
+  | 'planned' | 'generating' | 'quality_check' | 'needs_attention' | 'ready_for_review'
+  | 'approved' | 'scheduling' | 'scheduled' | 'failed' | 'removed';
+
+export interface ContentPillar { name: string; percentage: number; }
+
+export interface ContentPlanConfig {
+  name: string;
+  goal: 'growth' | 'engagement' | 'education' | 'promotion' | 'traffic';
+  rangePreset: '7' | '14' | '30' | 'custom';
+  startDate: string;
+  endDate: string;
+  timezone: string;
+  postingDays: number[];
+  postsPerDay: number;
+  preferredTimeMode: 'manual' | 'ai';
+  preferredTimes: string[];
+  socialAccountIds: number[];
+  topicMode: 'general' | 'custom';
+  topics: string[];
+  contentPillars: ContentPillar[];
+  formats: PlannerFormat[];
+  backgroundSelections: string[];
+  generationNotes: string;
+  productEmphasis: string;
+  videoId: string | null;
+  approvalMode: 'manual' | 'automatic';
+  useTrends: boolean;
+}
+
+export interface ContentPlanSlot {
+  id: string;
+  localDate: string;
+  localTime: string;
+  scheduledAt: string;
+  timezone: string;
+  topic: string;
+  pillar: string;
+  format: PlannerFormat;
+  backgroundSelection: string | null;
+  socialAccountIds: number[];
+  status: PlannerSlotStatus;
+  conflicts: Array<{ postId: string; scheduledAt: string; socialAccounts: number[] }>;
+  post: Slideshow | null;
+  qualityReport: QualityReport | null;
+  approvedAt: string | null;
+  warningsAcknowledgedAt?: string | null;
+  postbridgeId: string | null;
+  scheduleUncertain: boolean;
+  error: string | null;
+}
+
+export interface ContentPlan {
+  id: string;
+  projectId: string;
+  name: string;
+  config: ContentPlanConfig;
+  slots: ContentPlanSlot[];
+  automaticSchedulingConfirmedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  progress: { total: number; complete: number; failures: number; remaining: number };
 }
 
 export interface NotesData {
@@ -55,6 +155,7 @@ export interface QualityBreakdown {
   viralPotential?: number;
   usefulness?: number;
   nonGenericWording?: number;
+  instructionAdherence?: number;
 }
 
 export interface BrainState {
@@ -75,7 +176,8 @@ export interface Project {
   name: string;
   brain: BrainState;
   defaults: ProjectDefaults;
-  imagePacks: string[]; // background packs generation draws from ([] = gradients only)
+  // Bundled pack names and stable Library folder ids ([] = gradients only).
+  imagePacks: string[];
 }
 
 export interface AppConfig {
@@ -102,8 +204,9 @@ export interface LibraryImage {
 }
 
 export interface LibraryPack {
+  id: string;
   name: string;
-  source: 'bundled' | 'scraped' | 'imported';
+  source: 'bundled' | 'library';
   count: number;
   covers: string[];
 }
@@ -176,11 +279,13 @@ export interface SocialAccount {
 export interface ScheduledPost {
   id: string;
   caption: string;
-  status: string; // scheduled | processing | posted | draft
+  status: string; // scheduled | processing | posted | failed | draft | unknown
   scheduledAt: string | null;
-  mediaUrls: string[];
+  media: Array<{ url: string; mimeType: string | null; duration: number | null }>;
+  mediaCount: number;
   socialAccounts: number[];
   isDraft: boolean;
+  createdAt: string | null;
 }
 
 export interface PostResult {

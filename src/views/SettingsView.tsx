@@ -74,14 +74,6 @@ export function SettingsView({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [test, setTest] = useState<{ postbridge: boolean; openrouter: boolean; deepseek: boolean; apify: boolean; errors: Record<string, string> } | null>(null);
 
-  // Re-sync editable fields when the active project changes (switching projects).
-  useEffect(() => {
-    setName(project.name);
-    setMode(project.defaults.mode);
-    setSelected(project.defaults.socialAccountIds);
-    setImagePacks(project.imagePacks);
-  }, [project.id, project.name, project.defaults.mode, project.defaults.socialAccountIds, project.imagePacks]);
-
   useEffect(() => {
     getModels().then(setModels).catch(() => setModels([]));
     getDeepSeekModels().then(setDeepseekModels).catch(() => {});

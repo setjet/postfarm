@@ -4,6 +4,16 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer components {
+  .input {
+    @apply mt-1.5 h-10 w-full rounded-lg border border-line bg-control px-3 text-[12px] normal-case tracking-normal text-ink outline-none focus:border-accent;
+  }
+
+  .textarea {
+    @apply mt-1.5 w-full resize-y rounded-lg border border-line bg-control px-3 py-2 text-[12px] normal-case tracking-normal text-ink outline-none focus:border-accent;
+  }
+}
+
 :root {
   --bg:         #151515;
   --surface:    #1b1b1b;
@@ -147,6 +157,16 @@ select option {
   }
 }
 
+@keyframes textBlink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
 .skeleton {
   background: linear-gradient(90deg, var(--raised) 25%, var(--overlay) 50%, var(--raised) 75%);
   background-size: 200% auto;
@@ -167,6 +187,10 @@ select option {
   animation: fadeUp 220ms ease both;
 }
 
+.text-blink {
+  animation: textBlink 2s ease-in-out infinite;
+}
+
 .text-gradient {
   background: linear-gradient(90deg, #f3f3f3, #7dd3fc, #c084fc, #f3f3f3);
   background-size: 200% auto;
@@ -184,5 +208,10 @@ select option {
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
     transition-duration: 1ms !important;
+  }
+
+  .text-blink {
+    animation: none !important;
+    opacity: 1;
   }
 }

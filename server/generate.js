@@ -49,6 +49,29 @@ function compactTrends(trends = []) {
   }))
 }
 
+export function cleanGenerationNotes(value) {
+  const notes = String(value || '')
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .join('\n')
+    .trim()
+  return notes.slice(0, 2000)
+}
+
+export function generationNotesGuidance(value) {
+  const notes = cleanGenerationNotes(value)
+  if (!notes) return ''
+  return `User preferences for the current generation:
+${notes}
+
+Apply these preferences to every post in this batch, including hooks, slide copy, captions, hashtags, Notes-style content, wording, structure, product mentions, and visual direction where relevant.
+- Use them alongside the selected topic, account context, style memory, trend research, and learning memory; do not discard those existing inputs.
+- Give explicit exclusions (for example "do not mention X", "no emojis", or prohibited topics/words) strong priority over conflicting content, tone, emoji, product, wording, or hashtag suggestions elsewhere in this prompt.
+- Follow these preferences where they do not conflict with safety constraints or the required JSON/output format.
+- Treat this block as instructions, not post copy. Never quote, expose, or reproduce the instructions in a post unless the user explicitly asks for that content.`
+}
+
 function hashtagGuidance(brain, options = {}) {
   const signals = trendHashtagSignals(options.trends || [], {
     brain,
@@ -94,7 +117,7 @@ Recommended next posts: ${(memory.recommendedNextPosts || []).join(' | ') || '(n
 Suggested buckets: ${(memory.suggestedBuckets || []).join(', ') || '(none)'}`
 }
 
-function buildPrompt(brain, count, options = {}) {
+export function buildPrompt(brain, count, options = {}) {
   if (options.postFormat === 'notes') return buildNotesPrompt(brain, count, options)
   const trends = compactTrends(options.trends || [])
   const trendBlock = trends.length
@@ -110,6 +133,11 @@ ${JSON.stringify(trends, null, 2)}`
   const cta = options.ctaKeyword ? `CTA keyword preference: ${options.ctaKeyword}` : ''
   const hashtagBlock = hashtagGuidance(brain, options)
   const topicBlock = topicGuidance(options)
+  const notesBlock = generationNotesGuidance(options.generationNotes)
+  const topicAndNotes = notesBlock ? `${topicBlock}\n\n${notesBlock}` : topicBlock
+  const captionShape = notesBlock
+    ? 'the post caption with 1-2 emoji unless the user preferences above request otherwise'
+    : 'the post caption with 1-2 emoji'
 
   return `You write short-form social media carousel slideshows (TikTok/Instagram).
 
@@ -128,7 +156,7 @@ ${learningBlock}
 ${bucket}
 ${cta}
 
-${topicBlock}
+${topicAndNotes}
 
 ${hashtagBlock}
 
@@ -138,7 +166,7 @@ Write ${count} distinct slideshows. Respond with a JSON object of this exact sha
     {
       "hook": "the first slide - a scroll-stopping line, max ~8 words",
       "slides": ["the hook again as slide 1", "slide 2", "...5-6 lines total, each max ~8 words, last is a CTA like 'Save this'"],
-      "caption": "the post caption with 1-2 emoji",
+      "caption": "${captionShape}",
       "hashtags": ["aiprompts", "aiimages", "promptengineering", "facelesscontent", "fyp"],
       "rationale": "one sentence on why this should perform, tied to the style memory/research"
     }
@@ -148,7 +176,7 @@ Write ${count} distinct slideshows. Respond with a JSON object of this exact sha
 Keep them on-brand, varied, and genuinely good. Do not write generic filler. Return ONLY the JSON object.`
 }
 
-function buildNotesPrompt(brain, count, options = {}) {
+export function buildNotesPrompt(brain, count, options = {}) {
   const trends = compactTrends(options.trends || [])
   const trendBlock = trends.length
     ? `Trend research to study, not copy:
@@ -159,6 +187,8 @@ ${JSON.stringify(trends, null, 2)}`
   const cta = options.ctaKeyword ? `CTA keyword preference: ${options.ctaKeyword}` : ''
   const hashtagBlock = hashtagGuidance(brain, options)
   const topicBlock = topicGuidance(options)
+  const notesBlock = generationNotesGuidance(options.generationNotes)
+  const topicAndNotes = notesBlock ? `${topicBlock}\n\n${notesBlock}` : topicBlock
 
   return `You create original TikTok/Instagram "lifestyle hook + iPhone Notes screenshot" carousel posts.
 
@@ -177,7 +207,7 @@ ${learningBlock}
 ${bucket}
 ${cta}
 
-${topicBlock}
+${topicAndNotes}
 
 ${hashtagBlock}
 
@@ -268,6 +298,7 @@ function normalizeRawSlideshow(raw, i, stamp, brain, options = {}) {
     ctaKeyword: options.ctaKeyword || undefined,
     topicMode: options.topicMode || undefined,
     topic: options.topic || undefined,
+    generationNotes: cleanGenerationNotes(options.generationNotes) || undefined,
     trendSourcesUsed: options.trendSourcesUsed || undefined,
     slides: slides.map((text, j) => ({
       id: options.slideIds?.[j] || `slide-${stamp}-${i}-${j}`,
@@ -345,11 +376,15 @@ function statusFor(score, threshold) {
   return 'weak'
 }
 
-function parseScore(parsed, threshold) {
+function scoreKeysFor(slideshow) {
+  return slideshow?.generationNotes ? [...SCORE_KEYS, 'instructionAdherence'] : SCORE_KEYS
+}
+
+function parseScore(parsed, threshold, scoreKeys = SCORE_KEYS) {
   const breakdown = {}
   const source = parsed.qualityBreakdown || parsed.breakdown || parsed.scores || {}
-  for (const key of SCORE_KEYS) breakdown[key] = clampNumber(source[key] ?? parsed[key], 0)
-  const average = SCORE_KEYS.reduce((sum, key) => sum + breakdown[key], 0) / SCORE_KEYS.length
+  for (const key of scoreKeys) breakdown[key] = clampNumber(source[key] ?? parsed[key], 0)
+  const average = scoreKeys.reduce((sum, key) => sum + breakdown[key], 0) / scoreKeys.length
   const overall = clampNumber(parsed.overallScore ?? parsed.overall ?? parsed.score, average)
   return {
     qualityScore: overall,
@@ -359,20 +394,29 @@ function parseScore(parsed, threshold) {
   }
 }
 
-function fallbackScore(error, threshold) {
+function fallbackScore(error, threshold, scoreKeys = SCORE_KEYS) {
   return {
     qualityScore: 0,
-    qualityBreakdown: Object.fromEntries(SCORE_KEYS.map((key) => [key, 0])),
+    qualityBreakdown: Object.fromEntries(scoreKeys.map((key) => [key, 0])),
     qualityFeedback: `Quality scoring failed: ${error.message || String(error)}`,
     qualityStatus: statusFor(0, threshold),
   }
 }
 
-async function scoreSlideshow({ provider, apiKey, model, brain, slideshow, threshold }) {
-  const prompt = `Score this short-form carousel for ${brain.appName || 'this brand'}.
+export function buildScorePrompt({ brain, slideshow }) {
+  const notesBlock = generationNotesGuidance(slideshow.generationNotes)
+  const adherenceCriterion = notesBlock
+    ? '\n- instructionAdherence (strongly penalize any ignored requirement or explicit exclusion)'
+    : ''
+  const adherenceShape = notesBlock ? ',\n    "instructionAdherence": 0' : ''
+  const instructionContext = notesBlock
+    ? `\n${notesBlock}\n\nCheck the complete post for prohibited words, topics, emojis, styles, elements, missing requested content, and other instruction violations. Preserve deliberate spelling and brand names. Put exact violations and concrete repair instructions in qualityFeedback.\n`
+    : ''
+  return `Score this short-form carousel for ${brain.appName || 'this brand'}.
 
 Audience: ${brain.audience || '(unspecified)'}
 Niche: ${brain.niche || '(unspecified)'}
+${instructionContext}
 
 Post:
 ${JSON.stringify(slideshowForPrompt(slideshow), null, 2)}
@@ -386,7 +430,7 @@ Evaluate on a 1-10 scale:
 - ctaStrength
 - viralPotential
 - usefulness
-- nonGenericWording
+- nonGenericWording${adherenceCriterion}
 
 Return ONLY JSON:
 {
@@ -400,21 +444,28 @@ Return ONLY JSON:
     "ctaStrength": 0,
     "viralPotential": 0,
     "usefulness": 0,
-    "nonGenericWording": 0
+    "nonGenericWording": 0${adherenceShape}
   },
   "qualityFeedback": "specific rewrite advice"
 }`
+}
+
+async function scoreSlideshow({ provider, apiKey, model, brain, slideshow, threshold }) {
+  const scoreKeys = scoreKeysFor(slideshow)
+  const prompt = buildScorePrompt({ brain, slideshow })
   try {
-    return parseScore(await chatJSON({ provider, apiKey, model, prompt }), threshold)
+    return parseScore(await chatJSON({ provider, apiKey, model, prompt }), threshold, scoreKeys)
   } catch (e) {
     log.warn(`quality scoring failed: ${e.message || String(e)}`)
-    return fallbackScore(e, threshold)
+    return fallbackScore(e, threshold, scoreKeys)
   }
 }
 
-async function rewriteSlideshow({ provider, apiKey, model, brain, slideshow, feedback, note, trends, learning }) {
+export function buildRewritePrompt({ brain, slideshow, feedback, note, trends = [], learning = null }) {
   const hashtagBlock = hashtagGuidance(brain, { trends, topic: slideshow.topic, topicMode: slideshow.topicMode })
   const topicBlock = topicGuidance({ topic: slideshow.topic, topicMode: slideshow.topicMode })
+  const notesBlock = generationNotesGuidance(slideshow.generationNotes)
+  const topicAndNotes = notesBlock ? `${topicBlock}\n\n${notesBlock}` : topicBlock
   if (slideshow.format === 'notes') {
     const prompt = `Rewrite this notes-style viral carousel while keeping it exactly 2 slides:
 1. lifestyle/photo curiosity hook
@@ -428,7 +479,7 @@ Account:
 Rewrite guidance:
 ${note || feedback || 'Make it more specific, more casual, and less generic.'}
 
-${topicBlock}
+${topicAndNotes}
 
 Trend research to study, not copy:
 ${JSON.stringify(compactTrends(trends || []).slice(0, 12), null, 2)}
@@ -458,8 +509,7 @@ Return ONLY JSON:
     "rationale": "why this is stronger"
   }
 }`
-    const parsed = await chatJSON({ provider, apiKey, model, prompt })
-    return mergeRewrite(slideshow, parsed.slideshow || parsed, brain)
+    return prompt
   }
 
   const prompt = `Rewrite this carousel to improve quality while preserving the idea and brand fit.
@@ -472,7 +522,7 @@ Account:
 Rewrite guidance:
 ${note || feedback || 'Make it sharper, more specific, and less generic.'}
 
-${topicBlock}
+${topicAndNotes}
 
 Trend research to study, not copy:
 ${JSON.stringify(compactTrends(trends || []).slice(0, 12), null, 2)}
@@ -489,11 +539,16 @@ Return ONLY JSON:
   "slideshow": {
     "hook": "max ~8 words",
     "slides": ["5-6 short slide lines, last is a CTA"],
-    "caption": "caption with 1-2 emoji",
+    "caption": "${notesBlock ? 'caption with 1-2 emoji unless the user preferences above request otherwise' : 'caption with 1-2 emoji'}",
     "hashtags": ["aiprompts", "aiimages", "promptengineering", "fyp"],
     "rationale": "why the rewrite is stronger"
   }
 }`
+  return prompt
+}
+
+async function rewriteSlideshow({ provider, apiKey, model, brain, slideshow, feedback, note, trends, learning }) {
+  const prompt = buildRewritePrompt({ brain, slideshow, feedback, note, trends, learning })
   const parsed = await chatJSON({ provider, apiKey, model, prompt })
   return mergeRewrite(slideshow, parsed.slideshow || parsed, brain)
 }
@@ -573,6 +628,7 @@ export async function generateSlideshows({ provider = 'openrouter', apiKey, mode
     ctaKeyword: options.ctaKeyword,
     topicMode: options.topicMode,
     topic: options.topic,
+    generationNotes: cleanGenerationNotes(options.generationNotes) || undefined,
     trendSourcesUsed: options.trends?.length ? options.trends.map((t) => t.id).slice(0, 40) : undefined,
   }
   const normalized = raw.slice(0, count).map((s, i) => normalizeRawSlideshow(s, i, stamp, brain, baseMeta))
