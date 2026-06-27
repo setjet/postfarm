@@ -25,7 +25,7 @@ interface SettingsViewProps {
   onReloadAccounts: () => void;
 }
 
-const POSTBRIDGE_URL = 'https://post-bridge.com?atp=clip-factory';
+const POSTBRIDGE_URL = 'https://post-bridge.com';
 
 const PostBridgeLink = ({ children }: { children: React.ReactNode }) => (
   <a href={POSTBRIDGE_URL} target="_blank" rel="noreferrer" className="text-accent underline decoration-white/20 hover:text-ink">
@@ -132,11 +132,11 @@ export function SettingsView({
     <>
       <ViewHeader
         title="Settings"
-        subtitle="Your own API keys, stored locally on this machine — never sent anywhere but the services they belong to."
+        subtitle="Your own API keys, stored locally on this machine and used only for the services you configure."
       />
 
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-4xl mx-auto p-4 sm:p-8 space-y-5">
+        <div className="page-content max-w-[1040px] space-y-5">
           {/* Project */}
           <Section
             title="Project"
@@ -152,16 +152,27 @@ export function SettingsView({
             )}
           </Section>
 
+          <Section
+            title="Privacy"
+            description="Postfarm is local-first. Your projects, media, generated posts, plans, and local data stay on your device. Content is only sent to external APIs when you use configured services such as AI providers, Apify, or Postbridge."
+          >
+            <p className="text-[12px] leading-relaxed text-ink-4">
+              API keys are saved in your operating system's user data folder. Imported media and generated drafts are local unless you explicitly schedule, upload, scrape, or generate through a connected service.
+            </p>
+          </Section>
+
           {/* Keys (global) */}
           <Section
             title="API keys"
-            description="Shared across all projects. Stored in ~/.slidesmith/config.json on your computer."
+            description="Shared across all projects. Stored in Postfarm's local user data folder on your computer."
           >
             <Field
               label="post-bridge API key"
               hint={<>Handles scheduling, posting &amp; analytics. Get one at <PostBridgeLink>post-bridge.com</PostBridgeLink>.</>}
             >
               <input
+                type="password"
+                autoComplete="off"
                 value={postbridge}
                 onChange={(e) => setPostbridge(e.target.value)}
                 placeholder="pb_..."
@@ -197,6 +208,8 @@ export function SettingsView({
             </Field>
             <Field label="OpenRouter API key" hint="Runs the AI that writes your slideshows — one key, any model. Get one at openrouter.ai/keys.">
               <input
+                type="password"
+                autoComplete="off"
                 value={openrouter}
                 onChange={(e) => setOpenrouter(e.target.value)}
                 placeholder="sk-or-..."
@@ -206,6 +219,8 @@ export function SettingsView({
             </Field>
             <Field label="DeepSeek API key" hint="Used when DeepSeek is the selected AI provider.">
               <input
+                type="password"
+                autoComplete="off"
                 value={deepseek}
                 onChange={(e) => setDeepseek(e.target.value)}
                 placeholder="sk-..."
@@ -213,8 +228,10 @@ export function SettingsView({
               />
               <TestBadge ok={test?.deepseek} error={test?.errors?.deepseek} />
             </Field>
-            <Field label="Apify API key (optional)" hint="Only needed to scrape MORE Pinterest images. The bundled aesthetic packs work without it. Get one at console.apify.com.">
+            <Field label="Apify API key (optional)" hint="Only needed to scrape external trend, image, or video research. Manual imports work without it. Get one at console.apify.com.">
               <input
+                type="password"
+                autoComplete="off"
                 value={apify}
                 onChange={(e) => setApify(e.target.value)}
                 placeholder="apify_api_..."
@@ -351,6 +368,33 @@ export function SettingsView({
               </span>
             )}
           </div>
+
+          <footer className="mx-auto max-w-sm pt-12 pb-3 text-center text-[12px] leading-6 text-ink-5">
+            <p>
+              Made with <span role="img" aria-label="love">❤️</span> by{' '}
+              <a
+                href="https://github.com/setjet"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Jet on GitHub"
+                className="font-semibold text-ink-3 underline decoration-white/10 underline-offset-4 transition-colors hover:text-ink hover:decoration-white/30"
+              >
+                Jet
+              </a>
+            </p>
+            <p className="mt-0.5">
+              Credits to{' '}
+              <a
+                href="https://github.com/athcagithub/SlideSmith"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="athcagithub's original SlideSmith project on GitHub"
+                className="font-semibold text-ink-3 underline decoration-white/10 underline-offset-4 transition-colors hover:text-ink hover:decoration-white/30"
+              >
+                athcagithub
+              </a>
+            </p>
+          </footer>
         </div>
       </div>
     </>
@@ -386,10 +430,10 @@ function TestBadge({ ok, error }: { ok?: boolean; error?: string }) {
 
 function Section({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
   return (
-    <section className="space-y-4 rounded-xl border border-line bg-surface p-4 shadow-main fade-up">
+    <section className="fade-up space-y-4 rounded-2xl border border-line bg-surface p-5 shadow-main sm:p-7">
       <div>
-        <h2 className="text-[12px] font-semibold text-ink-3 uppercase tracking-[0.12em]">{title}</h2>
-        <p className="text-[12px] text-ink-5 mt-1 leading-relaxed">{description}</p>
+        <h2 className="text-[13px] font-medium text-ink-2">{title}</h2>
+        <p className="mt-1 text-[11px] leading-5 text-ink-6">{description}</p>
       </div>
       {children}
     </section>
@@ -399,9 +443,9 @@ function Section({ title, description, children }: { title: string; description:
 function Field({ label, hint, children }: { label: string; hint?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div>
-      <label className="text-[11px] text-ink-5 mb-1 block">{label}</label>
+      <label className="mb-1 block text-[11px] font-medium text-ink-4">{label}</label>
       {children}
-      {hint && <p className="text-[11px] text-ink-6 mt-1 leading-relaxed">{hint}</p>}
+      {hint && <p className="mt-1 text-[11px] leading-5 text-ink-6">{hint}</p>}
     </div>
   );
 }
