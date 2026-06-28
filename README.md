@@ -31,6 +31,43 @@ It is built for creators, teams, and brands who want useful automation without h
 
 > Postfarm is bring-your-own-keys, local-first, and designed to feel like a calm production desk instead of a SaaS dashboard you do not control.
 
+## Postfarm vs. SlideSmith
+
+<div align="center">
+
+|  | [SlideSmith](https://github.com/athcagithub/SlideSmith) | Postfarm |
+| --- | --- | --- |
+| **Focus** | AI carousel generation and scheduling foundation | Full local-first content operations workspace |
+| **Interface** | Simple creator dashboard | Polished multi-view studio with Queue, Library, Planner, Schedule, Results, Learning, Brain, and Settings |
+| **Projects** | Single-workflow brand setup | Multi-project brand memory with separate defaults, accounts, style memory, and hashtag strategy |
+| **Generation** | Carousel-focused AI workflow | Standard carousels, image posts, video posts, text-note templates, rewrites, scoring, topic notes, and quality guidance |
+| **Planning** | Manual generation flow | Autopilot planner with date ranges, posting windows, formats, approval states, and slot-level actions |
+| **Media** | Bundled image-pack approach | Local media library with folders, imports, image/video assets, empty safe public defaults, and optional Apify research |
+| **Publishing** | Postbridge scheduling path | Drafts, scheduled posts, connected account loading, cached reads, rescheduling, delete flows, and conflict checks |
+| **Insights** | Basic results surface | Results plus local Learning Memory built from connected analytics |
+| **Privacy** | Local-first roots | Hardened open-source release: OS data directory, ignored local stores, no bundled private media, no telemetry |
+
+</div>
+
+<table>
+  <tr>
+    <td width="33%" align="center">
+      <strong>Sharper Workflow</strong><br />
+      Queue review, previews, planner slots, scheduling checks, and quality states make Postfarm feel like a complete production desk.
+    </td>
+    <td width="33%" align="center">
+      <strong>Better Daily UX</strong><br />
+      The UI has been expanded into a cleaner, more polished workspace for repeated creator and brand workflows.
+    </td>
+    <td width="33%" align="center">
+      <strong>Safer Public Release</strong><br />
+      Local data, API keys, media, generated posts, analytics, and schedules are kept out of Git by default.
+    </td>
+  </tr>
+</table>
+
+> SlideSmith is the foundation. Postfarm is the expanded, cleaner, more capable studio built on top of it.
+
 ## What You Can Do
 
 | Workflow | What Postfarm helps with |
