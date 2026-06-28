@@ -23,7 +23,7 @@ function rawParts(input: string | string[]) {
 
 export function normalizeHashtags(input: string | string[], options: { max?: number; includeFyp?: boolean } = {}) {
   const max = Math.min(Math.max(Math.round(Number(options.max) || 8), 1), 20);
-  const required = options.includeFyp === false ? [] : ['fyp'];
+  const required = options.includeFyp === true ? ['fyp'] : [];
   const seen = new Set<string>();
   const tags: string[] = [];
 
@@ -43,7 +43,7 @@ export function normalizeHashtags(input: string | string[], options: { max?: num
 export function captionWithHashtags(caption: string, hashtags: string[]) {
   const base = String(caption || '').trim();
   const existing = new Set(normalizeHashtags(base.match(/#[a-z0-9_]+/gi) || [], { max: 40, includeFyp: false }));
-  const tags = normalizeHashtags(hashtags).filter((tag) => !existing.has(tag));
+  const tags = normalizeHashtags(hashtags, { max: 20, includeFyp: false }).filter((tag) => !existing.has(tag));
   const suffix = tags.map((tag) => `#${tag}`).join(' ');
   return [base, suffix].filter(Boolean).join(' ');
 }

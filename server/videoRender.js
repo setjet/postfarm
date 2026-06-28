@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process'
 
 const FFMPEG = process.env.FFMPEG_PATH || 'ffmpeg'
 const FONT_CANDIDATES = [
-  process.env.SLIDESMITH_FONT,
+  process.env.POSTFARM_FONT,
   'C:\\Windows\\Fonts\\arialbd.ttf',
   '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
   '/System/Library/Fonts/Supplemental/Arial Bold.ttf',
@@ -111,10 +111,10 @@ function slideTexts(slideshow) {
     .map((s) => String(s.text || '').trim())
     .filter(Boolean)
   if (fromSlides.length) return fromSlides
-  return [slideshow.hook || slideshow.caption || 'Zara Tech'].filter(Boolean)
+  return [slideshow.hook || slideshow.caption || 'Your Brand'].filter(Boolean)
 }
 
-function buildFilter({ texts, duration, textPosition, watermark }) {
+function buildFilter({ texts, duration, textPosition, watermark, watermarkText }) {
   const parts = [
     'scale=1080:1920:force_original_aspect_ratio=increase',
     'crop=1080:1920',
@@ -139,19 +139,20 @@ function buildFilter({ texts, duration, textPosition, watermark }) {
   })
 
   if (watermark) {
+    const label = escapeFilterText(String(watermarkText || 'Your Brand').slice(0, 80))
     parts.push(
-      `drawtext=${font}text='Zara Tech':fontcolor=white@0.72:fontsize=34:` +
+      `drawtext=${font}text='${label}':fontcolor=white@0.72:fontsize=34:` +
         `x=(w-text_w)/2:y=h-150:borderw=2:bordercolor=black@0.65:shadowx=1:shadowy=1:shadowcolor=black@0.65`
     )
   }
   return parts.join(',')
 }
 
-export async function renderVideoPost({ slideshow, videoFile, duration, textPosition, watermark }) {
+export async function renderVideoPost({ slideshow, videoFile, duration, textPosition, watermark, watermarkText }) {
   if (!videoFile || !existsSync(videoFile)) throw new Error('Selected background video is missing.')
   await assertFfmpeg()
   const targetDuration = Math.min(Math.max(Math.round(Number(duration) || 12), 8), 15)
-  const tmp = mkdtempSync(join(tmpdir(), 'slidesmith-video-'))
+  const tmp = mkdtempSync(join(tmpdir(), 'postfarm-video-'))
   const out = join(tmp, 'post.mp4')
   try {
     const filter = buildFilter({
@@ -159,6 +160,7 @@ export async function renderVideoPost({ slideshow, videoFile, duration, textPosi
       duration: targetDuration,
       textPosition: textPosition === 'top' ? 'top' : 'center',
       watermark: watermark !== false,
+      watermarkText,
     })
     await runFfmpeg([
       '-y',

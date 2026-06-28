@@ -21,7 +21,7 @@ function stagesFor(options: GenerateOptions) {
 }
 
 function formatLabel(options: GenerateOptions) {
-  return options.postFormat === 'notes' ? 'Notes-style viral carousel' : 'Standard carousel';
+  return options.postFormat === 'notes' ? 'Text-note carousel' : 'Standard carousel';
 }
 
 function estimateSeconds(count: number, options: GenerateOptions) {
@@ -66,8 +66,8 @@ export function GenerationLoadingCard({ count, options }: GenerationLoadingCardP
   const remaining = remainingLabel(progress, estimateMs, startedAt);
 
   return (
-    <div className="fixed inset-0 z-[70] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="w-full max-w-md rounded-2xl border border-line bg-surface shadow-main fade-up overflow-hidden">
+    <div className="modal-backdrop !z-[70]">
+      <div className="modal-shell fade-up w-full max-w-md">
         <div className="p-5">
           <div className="flex items-start gap-3">
             <div className="w-10 h-10 rounded-xl bg-raised border border-line flex items-center justify-center text-accent shrink-0">

@@ -1,12 +1,11 @@
 // Local analytics learning memory. Stores compact AI summaries per project so
 // future generations can learn from performance without keeping huge raw dumps.
-import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { chatJSON } from './ai.js'
+import { getDataDir } from './paths.js'
 
-const DEFAULT_DIR = process.env.VERCEL ? join(tmpdir(), '.slidesmith') : join(homedir(), '.slidesmith')
-const DIR = process.env.SLIDESMITH_DIR || DEFAULT_DIR
+const DIR = getDataDir()
 const INDEX_PATH = join(DIR, 'learning.json')
 
 function ensureDir() {
@@ -109,7 +108,7 @@ export async function rebuildLearningMemory({ provider = 'openrouter', apiKey, m
   }
   if (!apiKey) throw new Error('Missing OpenRouter API key. Add it in Settings to rebuild learning memory.')
 
-  const prompt = `You are SlideSmith's analytics strategist.
+  const prompt = `You are Postfarm's analytics strategist.
 
 Brand/project:
 - Name: ${project.name}
@@ -149,7 +148,7 @@ Return ONLY this JSON shape:
     })
   } catch (e) {
     const fallback = fallbackMemory(project, analytics || [])
-    fallback.summary = `AI insight parsing failed, so SlideSmith saved a fallback summary. ${e.message || String(e)}`
+    fallback.summary = `AI insight parsing failed, so Postfarm saved a fallback summary. ${e.message || String(e)}`
     return saveLearningMemory(project.id, fallback)
   }
 }

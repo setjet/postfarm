@@ -163,7 +163,7 @@ function scoreLabel(slideshow: Slideshow) {
 function SlideshowCard({ slideshow, selected, onToggleSelect, onApprove, onReject, onEdit, onRewrite, onQuality, onSafeFix }: CardProps) {
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const quality = scoreLabel(slideshow);
-  const displayHashtags = normalizeHashtags(slideshow.hashtags);
+  const displayHashtags = normalizeHashtags(slideshow.hashtags, { max: 20, includeFyp: false });
   return (
     <div className={`self-start bg-surface border rounded-xl p-4 fade-up shadow-main transition-all hover:border-line-2 ${selected ? 'border-accent ring-1 ring-accent' : 'border-line'}`}>
       {/* Slide strip */}
@@ -192,7 +192,7 @@ function SlideshowCard({ slideshow, selected, onToggleSelect, onApprove, onRejec
         </h3>
         {slideshow.format === 'notes' && (
           <span className="inline-flex mb-2 text-[10px] font-semibold px-1.5 py-0.5 rounded-md border border-accent/40 bg-sky-500/10 text-accent uppercase tracking-wide">
-            Notes carousel
+            Text-note carousel
           </span>
         )}
         <p className="text-[12px] text-ink-5 leading-relaxed line-clamp-2">

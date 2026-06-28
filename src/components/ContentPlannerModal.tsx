@@ -24,7 +24,7 @@ type Stage = 'list' | 'configure' | 'preview' | 'manage';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const FORMATS: Array<{ id: PlannerFormat; label: string }> = [
-  { id: 'standard', label: 'Standard carousel' }, { id: 'notes', label: 'Notes-style' },
+  { id: 'standard', label: 'Standard carousel' }, { id: 'notes', label: 'Text-note carousel' },
   { id: 'image', label: 'Image post' }, { id: 'video', label: 'Video post' },
 ];
 
@@ -39,7 +39,7 @@ function initialConfig(accounts: SocialAccount[]): ContentPlanConfig {
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC', postingDays: [1, 2, 3, 4, 5],
     postsPerDay: 1, preferredTimeMode: 'ai', preferredTimes: ['10:00'], socialAccountIds: accounts.map((account) => account.id),
     topicMode: 'general', topics: [], contentPillars: [{ name: 'Education', percentage: 50 }, { name: 'Engagement', percentage: 50 }],
-    formats: ['standard', 'notes'], backgroundSelections: [], generationNotes: '', productEmphasis: '',
+    formats: ['standard'], backgroundSelections: [], generationNotes: '', productEmphasis: '',
     videoId: null, approvalMode: 'manual', useTrends: true,
   };
 }
@@ -210,12 +210,12 @@ export function ContentPlannerModal({ accounts, onClose, onScheduled, initialPla
 
   return (
     <>
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-3 backdrop-blur-sm" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <div className="flex max-h-[95vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-2xl">
+    <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <div role="dialog" aria-modal="true" aria-labelledby="content-planner-title" className="modal-shell flex max-h-[94vh] w-full max-w-5xl flex-col">
         <div className="flex items-center justify-between border-b border-line px-5 py-4">
           <div className="flex items-center gap-3">
             {stage !== 'list' && <button type="button" onClick={() => setStage(stage === 'manage' ? 'list' : stage === 'preview' ? 'configure' : 'list')} disabled={busy || jobBusy} className="text-ink-5 hover:text-ink"><ChevronLeft size={17} /></button>}
-            <div><h2 className="text-[15px] font-semibold text-ink">Autopilot Content Planner</h2><p className="text-[11px] text-ink-6">Plan, review, and schedule your content calendar.</p></div>
+            <div><h2 id="content-planner-title" className="text-[15px] font-semibold text-ink">Autopilot Content Planner</h2><p className="text-[11px] text-ink-6">Plan, review, and schedule your content calendar.</p></div>
           </div>
           <button type="button" aria-label="Close planner" onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-lg text-ink-5 hover:bg-white/5 hover:text-ink"><X size={17} /></button>
         </div>

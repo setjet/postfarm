@@ -182,7 +182,7 @@ function notesDataFrom(show: Slideshow) {
   const fallbackText = show.slides?.[1]?.text || show.caption || '';
   return show.notesData || {
     hookText: show.hook || show.slides?.[0]?.text || '',
-    noteTitle: 'notes',
+    noteTitle: 'quick notes',
     points: fallbackText
       .split('\n')
       .map((line) => line.trim())
@@ -220,7 +220,7 @@ async function renderNotesHookSlide(show: Slideshow): Promise<string> {
   ctx.lineJoin = 'round';
   const lines = wrap(ctx, text.toLowerCase(), maxWidth);
   const blockH = lines.length * lineHeight;
-  if (blockH > H * 0.72) throw new Error('Quality Gate: Notes hook text does not fit inside the renderer safe area.');
+  if (blockH > H * 0.72) throw new Error('Quality Gate: text-note hook text does not fit inside the renderer safe area.');
   const y = H * 0.58 - blockH / 2;
   for (let i = 0; i < lines.length; i++) {
     const yy = y + i * lineHeight;
@@ -324,7 +324,7 @@ async function renderNotesValueSlide(show: Slideshow): Promise<string> {
 
   const m = fitNotesMetrics(ctx, data);
   if (measureNotes(ctx, data, m) > m.bottomY - m.topY) {
-    throw new Error('Quality Gate: the complete Notes date, heading, and numbered points do not fit on the slide.');
+    throw new Error('Quality Gate: the complete text-note date, heading, and numbered points do not fit on the slide.');
   }
   const maxWidth = W - m.margin * 2;
   const date = data.noteDate || new Date().toLocaleString('en-US', {

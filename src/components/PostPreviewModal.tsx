@@ -65,7 +65,7 @@ export function PostPreviewStage({ slideshow, index, onIndexChange, video, thumb
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center" style={{ paddingLeft: `${SIDE_PAD_PCT}%`, paddingRight: `${SIDE_PAD_PCT}%` }}>
               <span style={{ ...captionTextStyle(), fontSize: '3.85cqh' }}>{current?.text || slideshow.hook}</span>
             </div>
-            <div className="pointer-events-none absolute inset-x-0 bottom-[5.5%] text-center text-[1.8cqh] font-semibold text-white/70 [text-shadow:0_1px_2px_#000]">Zara Tech</div>
+            <div className="pointer-events-none absolute inset-x-0 bottom-[5.5%] text-center text-[1.8cqh] font-semibold text-white/70 [text-shadow:0_1px_2px_#000]">Your Brand</div>
           </div>
         ) : current ? (
           <SlidePreview slide={current} className="w-full h-full" format={slideshow.format} notesData={slideshow.notesData} slideIndex={index} />
@@ -104,7 +104,7 @@ export function PostPreviewModal({ slideshow, video, onClose, returnFocus }: { s
   const [index, setIndex] = useState(0);
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
-  const hashtags = normalizeHashtags(slideshow.hashtags);
+  const hashtags = normalizeHashtags(slideshow.hashtags, { max: 20, includeFyp: false });
   const safeIndex = clampPreviewIndex(index, slideshow.slides.length);
 
   useEffect(() => {
@@ -139,14 +139,14 @@ export function PostPreviewModal({ slideshow, video, onClose, returnFocus }: { s
   }, [onClose, returnFocus, slideshow.slides.length]);
 
   return createPortal(
-    <div data-testid="post-preview-backdrop" className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="post-preview-title" className="bg-surface border border-line rounded-2xl w-[96vw] max-w-[1400px] h-[96vh] max-h-[96vh] flex flex-col sm:flex-row overflow-hidden shadow-main fade-up">
+    <div data-testid="post-preview-backdrop" className="modal-backdrop !z-[70] !p-2 sm:!p-4" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="post-preview-title" className="modal-shell fade-up flex h-[96vh] max-h-[96vh] w-[96vw] max-w-[1400px] flex-col sm:flex-row">
         <PostPreviewStage slideshow={slideshow} index={safeIndex} onIndexChange={setIndex} video={video} thumbnails />
         <div className="w-full sm:w-96 flex flex-col border-t sm:border-t-0 sm:border-l border-line min-h-0">
           <div className="flex items-center justify-between px-4 py-3 border-b border-line">
             <div className="min-w-0">
               <h2 id="post-preview-title" className="truncate text-[14px] font-semibold text-ink">Post preview</h2>
-              <p className="mt-0.5 flex items-center gap-1 text-[10px] capitalize text-ink-6">{video && <Film size={10} />} {video ? 'Video' : slideshow.format === 'notes' ? 'Notes carousel' : slideshow.slides.length === 1 ? 'Single image' : 'Carousel'}</p>
+              <p className="mt-0.5 flex items-center gap-1 text-[10px] capitalize text-ink-6">{video && <Film size={10} />} {video ? 'Video' : slideshow.format === 'notes' ? 'Text-note carousel' : slideshow.slides.length === 1 ? 'Single image' : 'Carousel'}</p>
             </div>
             <button ref={closeRef} type="button" aria-label="Close preview" onClick={onClose} className="w-8 h-8 rounded-lg text-ink-5 hover:text-ink hover:bg-white/[0.055] flex items-center justify-center"><X size={18} /></button>
           </div>

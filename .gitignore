@@ -1,5 +1,58 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+build/
+coverage/
+
+# Environment and local config
+.env
+.env.*
+!.env.example
+config.json
+settings.json
+queue.json
+plans.json
+trends.json
+results.json
+learning.json
+library.json
+folders.json
+videos.json
+dismissed-schedule-posts.json
+
+# Local databases
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+
+# Runtime data and generated assets
+data/
+localdata/
+storage/
+uploads/
+media/
+exports/
+generated/
+thumbnails/
+cache/
+logs/
+.postfarm/
+.slidesmith/
+
+# User-imported or scraped media should stay local
+public/library/**/*.jpg
+public/library/**/*.jpeg
+public/library/**/*.png
+public/library/**/*.webp
+public/library/**/*.gif
+!public/library/manifest.json
+
 # Logs
-logs
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -7,24 +60,15 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
-*.local
-
-# Secrets & local config (API keys live here — never commit)
-.env
-.env.*
-!.env.example
-.slidesmith/
-
-# Editor directories and files
+# OS/editor files
+.DS_Store
+Thumbs.db
 .vscode/*
 !.vscode/extensions.json
-.idea
-.DS_Store
+.idea/
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+*.local

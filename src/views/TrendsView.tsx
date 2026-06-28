@@ -175,7 +175,7 @@ export function TrendsView({ hasApify, canGenerate, generating, onGenerateFromTr
             </div>
             {!hasApify && <p className="text-[12px] text-ink-5">Add your Apify API key in Settings to mine trends.</p>}
             {note && <p className="text-[12px] text-success">{note}</p>}
-            {error && <p className="text-[12px] text-danger">{error}</p>}
+            {error && <p role="alert" className="text-[12px] text-danger">{error}</p>}
           </div>
         </div>
 

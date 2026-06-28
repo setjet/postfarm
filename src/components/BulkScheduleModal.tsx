@@ -128,8 +128,8 @@ export function BulkScheduleModal({ slideshows, accounts, defaults, onClose, onD
   const busy = progress !== null && doneCount === null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/55 backdrop-blur-sm flex items-center justify-center p-4" onClick={busy ? undefined : onClose}>
-      <div className="bg-surface border border-line rounded-2xl w-full max-w-md max-h-[92vh] flex flex-col shadow-main fade-up" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-backdrop" onClick={busy ? undefined : onClose}>
+      <div role="dialog" aria-modal="true" aria-label="Schedule selected posts" className="modal-shell fade-up flex max-h-[92vh] w-full max-w-md flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-line">
           <h2 className="text-[15px] font-semibold text-ink">Schedule {slideshows.length} slideshow{slideshows.length === 1 ? '' : 's'}</h2>
           {!busy && <button onClick={onClose} className="w-8 h-8 rounded-lg text-ink-5 hover:text-ink hover:bg-white/[0.055] flex items-center justify-center"><X size={18} /></button>}
@@ -233,7 +233,7 @@ export function BulkScheduleModal({ slideshows, accounts, defaults, onClose, onD
           </div>
         )}
 
-        <div className="px-5 py-4 border-t border-line bg-[#101010] flex justify-end gap-2">
+        <div className="flex justify-end gap-2 border-t border-line bg-surface/95 px-5 py-4 backdrop-blur">
           {doneCount !== null ? (
             <Button variant="primary" onClick={onDone}>Done</Button>
           ) : (

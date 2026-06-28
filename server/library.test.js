@@ -4,8 +4,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
-const testDir = mkdtempSync(join(tmpdir(), 'slidesmith-library-'))
-process.env.SLIDESMITH_DIR = testDir
+const testDir = mkdtempSync(join(tmpdir(), 'postfarm-library-'))
+process.env.POSTFARM_DIR = testDir
 
 const library = await import(`./library.js?test=${Date.now()}`)
 const folders = await import('./folders.js')
@@ -20,16 +20,14 @@ function image(name) {
   return { name, type: 'image/png', data: pixel }
 }
 
-test('pack list combines empty Library folders and backwards-compatible bundled packs', () => {
+test('pack list starts with empty Library folders and no bundled media', () => {
   const packs = library.listPacks()
   const uncategorized = packs.find((pack) => pack.id === folders.UNCATEGORIZED_FOLDER_ID)
   assert.deepEqual(
     { name: uncategorized.name, source: uncategorized.source, count: uncategorized.count },
     { name: 'Uncategorized', source: 'library', count: 0 },
   )
-  const bundled = packs.find((pack) => pack.source === 'bundled')
-  assert.equal(bundled.id, bundled.name)
-  assert.ok(bundled.count > 0)
+  assert.equal(packs.some((pack) => pack.source === 'bundled'), false)
 })
 
 test('folder ids resolve one or many images, and mixed media cannot enter the image pool', () => {
@@ -146,7 +144,7 @@ test('indexed traversal paths are cleaned without touching files outside the Lib
   assert.ok(!JSON.parse(readFileSync(indexPath, 'utf8')).some((item) => item.id === asset.id))
 })
 
-test('background selection cycles without repeats and preserves Notes behavior', () => {
+test('background selection cycles without repeats and preserves text-note behavior', () => {
   const pool = [{ url: 'a' }, { url: 'b' }, { url: 'c' }]
   const pick = library.createBackgroundPicker(pool, () => 0.4)
   const firstCycle = [pick().url, pick().url, pick().url]
@@ -165,24 +163,21 @@ test('background selection cycles without repeats and preserves Notes behavior',
   assert.equal(shows[1].slides[1].imageUrl, undefined)
 })
 
-test('bundled selections still resolve and empty or deleted folders fail clearly', () => {
-  const bundled = library.listPacks().find((pack) => pack.source === 'bundled')
-  assert.equal(library.resolveBackgroundSelection([bundled.name]).length, bundled.count)
-
+test('empty or deleted folders fail clearly', () => {
   const empty = folders.createFolder({ name: 'Empty', type: 'image' })
   assert.throws(() => library.resolveBackgroundSelection([empty.id]), /“Empty” has no usable images/)
   folders.deleteFolder(empty.id)
   assert.throws(() => library.resolveBackgroundSelection([empty.id]), /no longer exists/)
 })
 
-test('project settings persist stable folder ids alongside legacy bundled names', () => {
+test('project settings persist stable folder ids and discard unavailable pack names', () => {
   const persistent = folders.createFolder({ name: 'Persistent', type: 'image' })
   const config = store.getConfig()
-  store.updateProject(config.activeProjectId, { imagePacks: [persistent.id, 'Anime Aesthetic'] })
+  store.updateProject(config.activeProjectId, { imagePacks: [persistent.id, 'Legacy Pack'] })
   const saved = store.getActiveProject()
-  assert.deepEqual(saved.imagePacks, [persistent.id, 'Anime Aesthetic'])
+  assert.deepEqual(saved.imagePacks, [persistent.id])
 
   folders.deleteFolder(persistent.id)
   store.removeImagePackFromProjects(persistent.id)
-  assert.deepEqual(store.getActiveProject().imagePacks, ['Anime Aesthetic'])
+  assert.deepEqual(store.getActiveProject().imagePacks, [])
 })

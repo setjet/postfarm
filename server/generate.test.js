@@ -7,13 +7,14 @@ import {
   buildScorePrompt,
   cleanGenerationNotes,
   generationNotesGuidance,
+  hashtagGuidance,
 } from './generate.js'
 
 const brain = {
-  niche: 'AI education',
-  appName: 'Zara Tech',
-  appDescription: 'Practical AI tutorials',
-  audience: 'university students',
+  niche: 'Creator education',
+  appName: 'Example Brand',
+  appDescription: 'Practical creator workflows',
+  audience: 'independent creators',
   styleMemory: 'clear, useful, and specific',
 }
 
@@ -44,7 +45,7 @@ test('empty notes leave the existing generation prompt unchanged', () => {
   assert.equal(generationNotesGuidance(''), '')
 })
 
-test('standard and Notes-style prompts apply notes to the entire batch without treating them as copy', () => {
+test('standard and text-note prompts apply notes to the entire batch without treating them as copy', () => {
   const options = { generationNotes: 'focus on beginners\nno emojis' }
   for (const prompt of [buildPrompt(brain, 3, options), buildNotesPrompt(brain, 3, options)]) {
     assert.match(prompt, /User preferences for the current generation:/)
@@ -65,7 +66,7 @@ test('quality scoring checks adherence and explicit exclusions only when notes e
   assert.doesNotMatch(withoutNotes, /User preferences for the current generation/)
 })
 
-test('standard, Notes-style, automatic, and manual rewrite prompts retain generation notes', () => {
+test('standard, text-note, automatic, and manual rewrite prompts retain generation notes', () => {
   for (const format of ['standard', 'notes']) {
     const prompt = buildRewritePrompt({
       brain,
@@ -79,4 +80,37 @@ test('standard, Notes-style, automatic, and manual rewrite prompts retain genera
     assert.match(prompt, /do not mention making money\nno emojis/)
     assert.match(prompt, /shorter hook/)
   }
+})
+
+test('hashtag strategy is explicit in standard, text-note, scoring, and rewrite prompts', () => {
+  const hashtagStrategy = {
+    preferred: ['creatorworkflow'], required: ['yourbrand'], banned: ['fyp'], brand: ['yourbrand'],
+    style: 'niche', count: 5, trendInfluence: 'off', avoidGeneric: true,
+    notes: 'attract independent creators',
+  }
+  const options = { hashtagStrategy, hashtagNotes: 'prefer image-generation tags' }
+  for (const prompt of [
+    buildPrompt(brain, 2, options),
+    buildNotesPrompt(brain, 2, options),
+    buildScorePrompt({ brain, slideshow: { ...slideshow(), hashtagNotes: options.hashtagNotes }, hashtagStrategy }),
+    buildRewritePrompt({ brain, slideshow: { ...slideshow(), hashtagNotes: options.hashtagNotes }, hashtagStrategy }),
+  ]) {
+    assert.match(prompt, /Required tags.*yourbrand/)
+    assert.match(prompt, /Banned tags.*fyp/)
+    assert.match(prompt, /Style: niche/)
+    assert.match(prompt, /array of 5 clean strings/)
+    assert.match(prompt, /prefer image-generation tags/)
+    assert.match(prompt, /Trend influence is OFF/)
+  }
+})
+
+test('strong trend influence exposes scored relevant candidates while Off exposes none', () => {
+  const hashtagTrends = [{
+    hashtags: ['aiimages'], hook: 'AI images', caption: 'AI image prompts', query: 'AI images',
+    views: 10000, likes: 500, comments: 20, shares: 10, scrapedAt: new Date().toISOString(),
+  }]
+  const strong = hashtagGuidance(brain, { hashtagStrategy: { trendInfluence: 'strong' }, hashtagTrends, topic: 'AI images' })
+  const off = hashtagGuidance(brain, { hashtagStrategy: { trendInfluence: 'off' }, hashtagTrends, topic: 'AI images' })
+  assert.match(strong, /"tag": "aiimages"/)
+  assert.doesNotMatch(off, /"tag": "aiimages"/)
 })

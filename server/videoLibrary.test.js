@@ -4,8 +4,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
-const testDir = mkdtempSync(join(tmpdir(), 'slidesmith-videos-'))
-process.env.SLIDESMITH_DIR = testDir
+const testDir = mkdtempSync(join(tmpdir(), 'postfarm-videos-'))
+process.env.POSTFARM_DIR = testDir
 const videos = await import(`./videoLibrary.js?test=${Date.now()}`)
 
 after(() => rmSync(testDir, { recursive: true, force: true }))

@@ -5,6 +5,8 @@ import {
 } from 'lucide-react';
 import type { PostResult } from '../types';
 import { getResults, syncResults } from '../lib/api';
+import { ViewHeader } from '../components/ViewHeader';
+import { Button } from '../components/Button';
 
 interface ResultsViewProps {
   configured: boolean;
@@ -63,31 +65,26 @@ export function ResultsView({ configured }: ResultsViewProps) {
 
   return (
     <>
-      <header className="shrink-0 border-b border-line px-4 py-4 sm:px-8">
-        <div className="mx-auto flex w-full max-w-6xl flex-col items-start justify-between gap-3 sm:flex-row sm:items-center sm:gap-4">
-          <div className="min-w-0">
-            <h1 className="text-[24px] font-semibold leading-tight text-ink sm:text-[26px]">Results</h1>
-            <p className="mt-1 text-[12px] leading-relaxed text-ink-5">Live performance analytics for your published posts.</p>
-          </div>
-          {configured && <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
-            {latestSync && <span className="hidden text-[10px] text-ink-6 lg:block">Last synced {formatDate(latestSync, true)}</span>}
-            <button
-              type="button"
-              onClick={() => void refresh()}
-              disabled={refreshing}
-              aria-busy={refreshing}
-              aria-live="polite"
-              className="flex h-9 w-[100px] items-center justify-center gap-1.5 rounded-lg border border-line bg-control px-3 text-[12px] text-ink-4 shadow-main hover:border-line-2 hover:text-ink disabled:cursor-wait disabled:opacity-60"
-            >
-              <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
-              {refreshing ? 'Syncing…' : 'Refresh'}
-            </button>
-          </div>}
-        </div>
-      </header>
+      <ViewHeader
+        title="Results"
+        subtitle="Live performance analytics for your published posts."
+        right={configured ? <>
+          {latestSync && <span className="hidden text-[10px] text-ink-6 lg:block">Last synced {formatDate(latestSync, true)}</span>}
+          <Button
+            variant="secondary"
+            icon={<RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />}
+            onClick={() => void refresh()}
+            disabled={refreshing}
+            aria-busy={refreshing}
+            aria-live="polite"
+          >
+            {refreshing ? 'Syncing…' : 'Refresh'}
+          </Button>
+        </> : undefined}
+      />
 
       <div className="flex-1 overflow-y-auto">
-        <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-8 sm:py-8">
+        <main className="page-content">
           {error && results !== null && (
             <div role="alert" className="mb-5 border-l-2 border-danger bg-red-500/[0.06] px-3 py-2 text-[12px] text-danger">
               Analytics could not be refreshed. Showing the last loaded data. {error}

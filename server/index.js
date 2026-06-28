@@ -1,4 +1,4 @@
-// Slidesmith local server. Holds the user's API keys, runs Claude generation,
+// Postfarm local server. Holds the user's API keys, runs AI generation,
 // proxies post-bridge (so keys never touch the browser and CORS is a non-issue),
 // and serves the built UI in production. In dev, Vite proxies /api here.
 import express from 'express'
@@ -37,6 +37,7 @@ import {
   getPostMedia,
   updatePostSchedule,
   deletePost,
+  markPostRemoved,
   listAnalytics,
   syncAnalytics,
   uploadMedia,
@@ -81,6 +82,7 @@ import { createPlan, movePlanSlot, planProgress, plannerStatusForQualityReport, 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const schedLog = logger('schedule')
 const genLog = logger('generate')
+const API_DEBUG = process.env.POSTFARM_API_DEBUG === '1'
 const PORT = process.env.PORT || 8787
 // Bind loopback only by default. This server returns the user's API keys in
 // plaintext (GET /api/config feeds the Settings UI), so listening on all
@@ -168,7 +170,7 @@ app.delete('/api/trends', h(async (_req, res) => res.json(clearTrends(getActiveP
 app.get('/api/queue', h(async (_req, res) => {
   const project = getActiveProject()
   const queue = getQueue(project.id)
-  const checked = queue.map((post, index) => isQualityStale(post)
+  const checked = queue.map((post, index) => isQualityStale(post, post.qualityReport, { brain: project.brain, hashtagStrategy: project.hashtagStrategy })
     ? withQuality(post, project, { recentHooks: queue.slice(0, index).map((item) => item.hook) })
     : post)
   if (checked.some((post, index) => post !== queue[index])) setQueue(project.id, checked)
@@ -187,6 +189,7 @@ app.post('/api/generate', h(async (req, res) => {
   }
   const trendIds = Array.isArray(req.body?.trendIds) ? req.body.trendIds : []
   const trends = req.body?.useTrends || trendIds.length ? trendsForPrompt(project.id, trendIds) : []
+  const hashtagTrends = project.hashtagStrategy?.trendInfluence === 'off' ? [] : trendsForPrompt(project.id, [])
   const learning = req.body?.useLearning ? getLearningMemory(project.id) : null
 
   // Validate folder-backed packs before spending time or API credit on content
@@ -202,6 +205,8 @@ app.post('/api/generate', h(async (req, res) => {
     count,
     options: {
       trends,
+      hashtagTrends,
+      hashtagStrategy: project.hashtagStrategy,
       learning,
       qualityMode: req.body?.qualityMode || 'off',
       minScore: req.body?.minScore,
@@ -211,6 +216,7 @@ app.post('/api/generate', h(async (req, res) => {
       topicMode: req.body?.topicMode === 'custom' ? 'custom' : 'general',
       topic: req.body?.topicMode === 'custom' ? String(req.body?.topic || '').trim() : undefined,
       generationNotes: cleanGenerationNotes(req.body?.generationNotes) || undefined,
+      hashtagNotes: String(req.body?.hashtagNotes || '').trim().slice(0, 1000) || undefined,
       postFormat: req.body?.postFormat === 'notes' ? 'notes' : 'standard',
     },
   })
@@ -244,7 +250,16 @@ app.put('/api/queue/:id', h(async (req, res) => {
     if (s.id !== req.params.id) return s
     const merged = { ...s }
     for (const k of allowed) if (patch[k] !== undefined) merged[k] = patch[k]
-    if (patch.hashtags !== undefined) merged.hashtags = normalizeHashtags(patch.hashtags, { brain: getActiveProject().brain })
+    // Manual edits are cleaned, but do not silently replace the user's choices
+    // with project strategy tags. Strategy is reapplied only by generation,
+    // rewrite, or an explicit Quality Gate repair.
+    if (patch.hashtags !== undefined) merged.hashtags = normalizeHashtags(patch.hashtags, {
+      brain: getActiveProject().brain,
+      max: 20,
+      applyStrategy: false,
+      includeBrand: false,
+      includeFyp: false,
+    })
     if (patch.slides !== undefined) {
       merged.mediaUnavailable = merged.slides.some((slide) => slide.imageUnavailable)
       merged.mediaError = merged.mediaUnavailable
@@ -272,9 +287,11 @@ app.post('/api/queue/:id/rewrite', h(async (req, res) => {
     apiKey,
     model,
     brain: project.brain,
+    hashtagStrategy: project.hashtagStrategy,
     slideshow: current,
     note: req.body?.note,
     trends: trendsForPrompt(project.id, current.trendSourcesUsed || []),
+    hashtagTrends: project.hashtagStrategy?.trendInfluence === 'off' ? [] : trendsForPrompt(project.id, []),
     learning: getLearningMemory(project.id),
     threshold: req.body?.minScore || 7,
   })
@@ -300,7 +317,7 @@ app.post('/api/queue/:id/quality/fix', h(async (req, res) => {
   const queue = getQueue(project.id)
   const current = queue.find((item) => item.id === req.params.id)
   if (!current) return res.status(404).json({ error: 'This slideshow is no longer in the queue.' })
-  const repaired = repairQuality(current, { brain: project.brain })
+  const repaired = repairQuality(current, { brain: project.brain, hashtagStrategy: project.hashtagStrategy })
   const checked = withQuality(repaired, project, {
     recentHooks: queue.filter((item) => item.id !== current.id).map((item) => item.hook),
   })
@@ -421,6 +438,8 @@ app.post('/api/plans/:planId/slots/:slotId/generate', h(async (req, res) => {
       provider, apiKey, model, brain: project.brain, count: 1,
       options: {
         trends,
+        hashtagTrends: project.hashtagStrategy?.trendInfluence === 'off' ? [] : trendsForPrompt(project.id, []),
+        hashtagStrategy: project.hashtagStrategy,
         learning: getLearningMemory(project.id),
         qualityMode: 'off',
         topicMode: 'custom',
@@ -456,7 +475,7 @@ app.post('/api/plans/:planId/slots/:slotId/generate', h(async (req, res) => {
     plan = updatePlanSlot(project.id, plan, slot.id, { status: 'quality_check', post })
     const currentPlan = plan
     const recentHooks = currentPlan.slots.filter((item) => item.id !== slot.id && item.post?.hook).map((item) => item.post.hook)
-    const qualityReport = runQualityGate(post, { brain: project.brain, recentHooks })
+    const qualityReport = runQualityGate(post, { brain: project.brain, hashtagStrategy: project.hashtagStrategy, recentHooks })
     const status = plannerStatusForQualityReport(qualityReport)
     plan = updatePlanSlot(project.id, plan, slot.id, { post: { ...post, qualityReport }, qualityReport, status, error: null })
   } catch (error) {
@@ -471,9 +490,10 @@ app.post('/api/plans/:planId/slots/:slotId/quality/fix', h(async (req, res) => {
   if (!plan) return res.status(404).json({ error: 'Content plan not found.' })
   const slot = plan.slots.find((item) => item.id === req.params.slotId)
   if (!slot?.post) return res.status(409).json({ error: 'Generate this slot before repairing it.' })
-  const repaired = repairQuality(slot.post, { brain: project.brain })
+  const repaired = repairQuality(slot.post, { brain: project.brain, hashtagStrategy: project.hashtagStrategy })
   const qualityReport = runQualityGate(repaired, {
     brain: project.brain,
+    hashtagStrategy: project.hashtagStrategy,
     recentHooks: plan.slots.filter((item) => item.id !== slot.id && item.post?.hook).map((item) => item.post.hook),
   })
   plan = updatePlanSlot(project.id, plan, slot.id, {
@@ -492,6 +512,7 @@ app.post('/api/plans/:planId/slots/:slotId/quality', h(async (req, res) => {
   if (!slot?.post) return res.status(409).json({ error: 'Generate this slot before checking it.' })
   const qualityReport = runQualityGate(slot.post, {
     brain: project.brain,
+    hashtagStrategy: project.hashtagStrategy,
     recentHooks: plan.slots.filter((item) => item.id !== slot.id && item.post?.hook).map((item) => item.post.hook),
   })
   plan = updatePlanSlot(project.id, plan, slot.id, {
@@ -509,8 +530,8 @@ app.post('/api/plans/:planId/slots/:slotId/approve', h(async (req, res) => {
   if (!plan) return res.status(404).json({ error: 'Content plan not found.' })
   const slot = plan.slots.find((item) => item.id === req.params.slotId)
   if (!slot?.post) return res.status(409).json({ error: 'Generate this slot before approving it.' })
-  const qualityReport = isQualityStale(slot.post, slot.qualityReport)
-    ? runQualityGate(slot.post, { brain: project.brain, recentHooks: plan.slots.filter((item) => item.id !== slot.id && item.post?.hook).map((item) => item.post.hook) })
+  const qualityReport = isQualityStale(slot.post, slot.qualityReport, { brain: project.brain, hashtagStrategy: project.hashtagStrategy })
+    ? runQualityGate(slot.post, { brain: project.brain, hashtagStrategy: project.hashtagStrategy, recentHooks: plan.slots.filter((item) => item.id !== slot.id && item.post?.hook).map((item) => item.post.hook) })
     : slot.qualityReport
   if (qualityReport.status === 'blocked') return res.status(409).json({ error: 'Blocking Quality Gate findings must be resolved before approval.', qualityReport })
   if (qualityReport.status === 'warnings' && !req.body?.warningsAcknowledged) return res.status(409).json({ error: 'Acknowledge the Quality Gate warnings before approval.', qualityReport })
@@ -623,7 +644,8 @@ app.post('/api/plans/:planId/slots/:slotId/schedule', h(async (req, res) => {
         videoFile,
         duration: Number(req.body?.duration) || 12,
         textPosition: req.body?.textPosition === 'top' ? 'top' : 'center',
-        watermark: req.body?.watermark !== false,
+      watermark: req.body?.watermark !== false,
+      watermarkText: project.brain?.appName || project.name || 'Your Brand',
       })
       qualityReport = runQualityGate(slot.post, {
         ...context,
@@ -691,7 +713,7 @@ app.post('/api/plans/:planId/slots/:slotId/schedule', h(async (req, res) => {
   res.json({ ...plan, progress: planProgress(plan) })
 }))
 
-// ── Image library (bundled aesthetic packs + Pinterest scrapes via Apify) ────────
+// ── Image library (local imports + optional Apify scrapes) ───────────────────────
 app.get('/api/library', h(async (_req, res) => res.json(listLibrary())))
 app.get('/api/library/packs', h(async (_req, res) => res.json(listPacks())))
 app.get('/api/library/folders', h(async (_req, res) => res.json(listFolders())))
@@ -732,7 +754,8 @@ app.get('/api/library/img/:id', h(async (req, res) => {
   if (!file) return res.status(404).end()
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
   res.set('Pragma', 'no-cache')
-  // dotfiles:'allow' is required — the path lives under ~/.slidesmith, and
+  // dotfiles:'allow' is required because the path may live under a dotfolder
+  // when users opt into a custom data directory, and
   // sendFile blocks dot-segment paths by default (would 404 every scrape).
   res.sendFile(file, { dotfiles: 'allow' })
 }))
@@ -774,10 +797,13 @@ app.get('/api/accounts', h(async (_req, res) => {
 }))
 
 app.get('/api/posts', h(async (_req, res) => {
+  const started = performance.now()
   const config = getConfig()
   const project = getActiveProject(config)
-  const posts = await listPosts(config.keys.postbridge)
+  const force = _req.query.refresh === '1'
+  const posts = await listPosts(config.keys.postbridge, { scope: project.id, force })
   reconcileDismissedPublishedPosts(project.id, posts.map((post) => post.id))
+  if (API_DEBUG) console.info('[api:schedule]', { posts: posts.length, force, routeMs: Math.round(performance.now() - started) })
   res.json(posts)
 }))
 
@@ -808,6 +834,7 @@ app.get('/api/posts/:id/media', h(async (req, res) => {
 }))
 
 app.patch('/api/posts/:id/schedule', h(async (req, res) => {
+  const started = performance.now()
   const { keys } = getConfig()
   const id = String(req.params.id || '').trim()
   const scheduledAt = String(req.body?.scheduledAt || '').trim()
@@ -820,25 +847,48 @@ app.patch('/api/posts/:id/schedule', h(async (req, res) => {
     return res.status(400).json({ error: 'Scheduled time must be in the future.' })
   }
 
+  // Postbridge remains the source of truth for editability. This is one narrow
+  // post lookup, never a full Schedule refresh.
   const current = await getPost(keys.postbridge, id)
   if (String(current?.status || '').toLowerCase() !== 'scheduled' || current?.is_draft) {
     return res.status(409).json({ error: 'Only scheduled posts can be rescheduled.' })
   }
-  res.json(await updatePostSchedule(keys.postbridge, id, when.toISOString()))
+  await updatePostSchedule(keys.postbridge, id, when.toISOString())
+  if (API_DEBUG) console.info('[api:reschedule]', { postId: id, postbridgeRequests: 2, routeMs: Math.round(performance.now() - started) })
+  res.json({ postId: id, scheduledAt: when.toISOString(), status: 'scheduled' })
 }))
 
 app.delete('/api/posts/:id', h(async (req, res) => {
+  const started = performance.now()
   const { keys } = getConfig()
   const id = String(req.params.id || '').trim()
   if (!id || id.length > 200) return res.status(400).json({ error: 'Invalid post ID.' })
 
-  const current = await getPost(keys.postbridge, id)
+  let current
+  try {
+    // The point lookup protects published posts from the destructive endpoint;
+    // it does not load the full schedule or resolve any media.
+    current = await getPost(keys.postbridge, id)
+  } catch (error) {
+    if (error?.status === 404) {
+      markPostRemoved(keys.postbridge, id)
+      if (API_DEBUG) console.info('[api:delete]', { postId: id, postbridgeRequests: 1, alreadyRemoved: true, routeMs: Math.round(performance.now() - started) })
+      return res.json({ deleted: true, postId: id, status: 'already_removed' })
+    }
+    throw error
+  }
   const status = String(current?.status || '').toLowerCase()
   if (status !== 'scheduled' && !current?.is_draft) {
     return res.status(409).json({ error: 'Only scheduled posts or drafts can be removed.' })
   }
-  await deletePost(keys.postbridge, id)
-  res.json({ ok: true })
+  try {
+    await deletePost(keys.postbridge, id)
+  } catch (error) {
+    if (error?.status !== 404) throw error
+    markPostRemoved(keys.postbridge, id)
+  }
+  if (API_DEBUG) console.info('[api:delete]', { postId: id, postbridgeRequests: 2, routeMs: Math.round(performance.now() - started) })
+  res.json({ deleted: true, postId: id, status: current?.is_draft ? 'draft' : status })
 }))
 
 app.get('/api/results', h(async (_req, res) => {
@@ -1057,13 +1107,13 @@ if (existsSync(dist)) {
 
 if (!process.env.VERCEL) {
 app.listen(PORT, HOST, () => {
-  console.log(`\n  Slidesmith server → http://localhost:${PORT} (bound to ${HOST})`)
+  console.log(`\n  Postfarm server → http://localhost:${PORT} (bound to ${HOST})`)
   console.log(`  Config + queue stored in ${CONFIG_DIR}\n`)
 })
 }
 
 function withQuality(post, project, context = {}) {
-  return { ...post, qualityReport: runQualityGate(post, { brain: project.brain, ...context }) }
+  return { ...post, qualityReport: runQualityGate(post, { brain: project.brain, hashtagStrategy: project.hashtagStrategy, ...context }) }
 }
 
 function updateQueueItem(projectId, id, patch) {
@@ -1075,9 +1125,10 @@ function updateQueueItem(projectId, id, patch) {
 function refreshStalePlanQuality(project, plan) {
   let changed = false
   const slots = plan.slots.map((slot) => {
-    if (!slot.post || slot.status === 'removed' || !isQualityStale(slot.post, slot.qualityReport)) return slot
+    if (!slot.post || slot.status === 'removed' || !isQualityStale(slot.post, slot.qualityReport, { brain: project.brain, hashtagStrategy: project.hashtagStrategy })) return slot
     const qualityReport = runQualityGate(slot.post, {
       brain: project.brain,
+      hashtagStrategy: project.hashtagStrategy,
       recentHooks: plan.slots.filter((item) => item.id !== slot.id && item.post?.hook).map((item) => item.post.hook),
     })
     let status = slot.status
@@ -1130,6 +1181,7 @@ async function publishContext({ keys, project, post, socialAccounts, scheduledAt
   const selected = new Set((socialAccounts || []).map(Number))
   return {
     brain: project.brain,
+    hashtagStrategy: project.hashtagStrategy,
     scheduling: true,
     mode,
     scheduledAt,

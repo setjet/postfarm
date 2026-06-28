@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
-import { normalizeHashtags } from './hashtags.js'
+import { GENERIC_HASHTAGS, normalizeHashtags, resolveHashtagStrategy, strategyWithHashtagNotes } from './hashtags.js'
 
-export const QUALITY_REPORT_VERSION = 2
+export const QUALITY_REPORT_VERSION = 3
 
 export const PLATFORM_RULES = Object.freeze({
   instagram: { captionMax: 2200, hashtagWarn: 15, mediaMax: 10, formats: ['carousel', 'image', 'video'] },
@@ -37,8 +37,10 @@ export function qualityVersion(post, context = {}) {
     slides: (post?.slides || []).map((slide) => ({ text: slide.text || '', imageUrl: slide.imageUrl || '' })),
     notesData: post?.notesData || null,
     generationNotes: post?.generationNotes || '',
+    hashtagNotes: post?.hashtagNotes || '',
     topic: post?.topic || '',
     productEmphasis: post?.productEmphasis || '',
+    hashtagStrategy: context.hashtagStrategy ? resolveHashtagStrategy(context.hashtagStrategy, context.brain) : null,
     requiredProduct: post?.requiredProduct || post?.productRequirement || null,
     promotional: !!post?.promotional,
     scheduledAt: context.scheduledAt || null,
@@ -49,8 +51,8 @@ export function qualityVersion(post, context = {}) {
   return createHash('sha256').update(JSON.stringify(stable(source))).digest('hex').slice(0, 20)
 }
 
-export function isQualityStale(post, report = post?.qualityReport) {
-  return !report || report.version !== QUALITY_REPORT_VERSION || report.contentVersion !== qualityVersion(post)
+export function isQualityStale(post, report = post?.qualityReport, context = {}) {
+  return !report || report.version !== QUALITY_REPORT_VERSION || report.contentVersion !== qualityVersion(post, context)
 }
 
 function finding(id, check, severity, explanation, field, suggestion, extra = {}) {
@@ -173,7 +175,7 @@ export function detectTextOverflow(post) {
       if (point.body) height += 6 + estimateWrappedLines(point.body, 58) * 38
       if (index < data.points.length - 1) height += 18
     }
-    if (height > 1676) issues.push({ field: 'notesData', explanation: 'The complete Notes date, heading, and numbered points do not fit inside the renderer safe area.' })
+    if (height > 1676) issues.push({ field: 'notesData', explanation: 'The complete text-note date, heading, and numbered points do not fit inside the renderer safe area.' })
   } else {
     for (const [index, slide] of (post?.slides || []).entries()) {
       const lines = estimateWrappedLines(slide.text, 32)
@@ -230,11 +232,34 @@ export function runQualityGate(post, context = {}) {
   })
   if (new Set(normalizedSlides).size < normalizedSlides.length) add('duplicate-slide-copy', 'Unique slide copy', 'blocking', 'Two or more slides repeat the exact same content.', 'slides', 'Remove or rewrite the repeated slide before publishing.')
 
-  const rawTags = Array.isArray(post?.hashtags) ? post.hashtags.map((tag) => String(tag)) : []
+  const hashtagInput = post?.hashtags
+  const rawTags = Array.isArray(hashtagInput)
+    ? hashtagInput.map((tag) => String(tag))
+    : typeof hashtagInput === 'string' ? [hashtagInput] : []
   const simpleTags = rawTags.map((tag) => tag.replace(/^#+/, '').trim().toLowerCase()).filter(Boolean)
-  const cleanTags = normalizeHashtags(rawTags, { brain: context.brain, max: 20, includeBrand: false, includeFyp: false })
-  if (new Set(simpleTags).size < simpleTags.length || cleanTags.length !== simpleTags.length || rawTags.some((tag) => /\s|[^#a-z0-9_]/i.test(tag))) {
+  const inspectedTags = rawTags.flatMap((value) => String(value || '').replace(/([^\s,])#/g, '$1 #').split(/[,\s]+/))
+    .map((tag) => tag.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/^#+/, '').toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9_]+/g, ''))
+    .filter(Boolean)
+  const cleanTags = normalizeHashtags(rawTags, { brain: context.brain, max: 20, applyStrategy: false, includeBrand: false, includeFyp: false })
+  const strategy = strategyWithHashtagNotes(context.hashtagStrategy, post?.hashtagNotes, context.brain)
+  if (rawTags.length && !cleanTags.length) {
+    add('hashtags-unusable', 'Hashtag output', 'blocking', 'The hashtag output cannot be normalized into any valid tags.', 'hashtags', 'Replace the malformed hashtag output or regenerate hashtags.')
+  } else if (new Set(simpleTags).size < simpleTags.length || cleanTags.length !== simpleTags.length || rawTags.some((tag) => /\s|[^#a-z0-9_]/i.test(tag))) {
     add('hashtags-format', 'Hashtag formatting', 'warning', 'Hashtags contain duplicates or malformed values.', 'hashtags', 'Apply the safe hashtag cleanup.', { fix: 'safe' })
+  }
+  const bannedUsed = [...new Set(inspectedTags.filter((tag) => strategy.banned.includes(tag)))]
+  if (bannedUsed.length) add('hashtags-banned', 'Banned hashtags', 'blocking', `Banned hashtag${bannedUsed.length === 1 ? '' : 's'} used: ${bannedUsed.map((tag) => `#${tag}`).join(', ')}.`, 'hashtags', 'Remove every banned hashtag before publishing.', { fix: 'safe' })
+  const missingRequired = strategy.required.filter((tag) => !cleanTags.includes(tag) && !strategy.banned.includes(tag))
+  if (missingRequired.length) add('hashtags-required', 'Required hashtags', 'blocking', `Required hashtag${missingRequired.length === 1 ? '' : 's'} missing: ${missingRequired.map((tag) => `#${tag}`).join(', ')}.`, 'hashtags', 'Add the required hashtag strategy tags.', { fix: 'safe' })
+  if (cleanTags.length < strategy.count) add('hashtags-too-few', 'Hashtag count', 'warning', `This post has ${cleanTags.length} hashtag${cleanTags.length === 1 ? '' : 's'}; the project strategy targets ${strategy.count}.`, 'hashtags', `Use up to ${strategy.count} strong, relevant hashtags.`)
+  if (cleanTags.length > strategy.count) add('hashtags-too-many', 'Hashtag count', 'warning', `This post has ${cleanTags.length} hashtags; the project strategy targets ${strategy.count}.`, 'hashtags', `Keep the strongest ${strategy.count} hashtags.`, { fix: 'safe' })
+  const genericUsed = cleanTags.filter((tag) => GENERIC_HASHTAGS.has(tag))
+  if (strategy.avoidGeneric && genericUsed.length) add('hashtags-generic', 'Generic hashtags', 'warning', `Generic hashtag${genericUsed.length === 1 ? '' : 's'} used: ${genericUsed.map((tag) => `#${tag}`).join(', ')}.`, 'hashtags', 'Replace generic discovery tags with topic-specific tags.', { fix: 'safe' })
+  if (post?.topicMode === 'custom' && post?.topic && cleanTags.length) {
+    const topicWords = String(post.topic).toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length > 3)
+    if (topicWords.length && !cleanTags.some((tag) => topicWords.some((word) => tag.includes(word)))) {
+      add('hashtags-topic', 'Topic-relevant hashtags', 'warning', 'None of the hashtags clearly matches the selected custom topic.', 'hashtags', 'Add at least one precise hashtag for the selected topic.')
+    }
   }
 
   if (String(post?.caption || '').length > 1800) add('long-caption', 'Caption length', 'warning', 'The caption is unusually long and may be truncated on some platforms.', 'caption', 'Shorten it or verify each selected platform limit.')
@@ -314,7 +339,7 @@ export function runQualityGate(post, context = {}) {
       rendered.forEach((item, index) => {
         const info = pngInfo(item)
         if (!info || info.bytes < 512) add(`broken-render-${index}`, 'Rendered media file', 'blocking', `Rendered slide ${index + 1} is empty or invalid.`, `media.${index}`, 'Render the slide again.', { slideIndex: index })
-        else if (info.width !== 1080 || info.height !== 1920) add(`render-dimensions-${index}`, 'Output dimensions', 'blocking', `Rendered slide ${index + 1} is ${info.width}×${info.height}, not 1080×1920.`, `media.${index}`, 'Re-render with the SlideSmith vertical canvas.', { slideIndex: index })
+        else if (info.width !== 1080 || info.height !== 1920) add(`render-dimensions-${index}`, 'Output dimensions', 'blocking', `Rendered slide ${index + 1} is ${info.width}×${info.height}, not 1080×1920.`, `media.${index}`, 'Re-render with the Postfarm vertical canvas.', { slideIndex: index })
       })
     }
   }
@@ -324,7 +349,9 @@ export function runQualityGate(post, context = {}) {
   const score = Math.max(0, 100 - blocking * 25 - warnings * 6)
   return {
     version: QUALITY_REPORT_VERSION,
-    contentVersion: qualityVersion(post, context.scheduling ? context : {}),
+    contentVersion: qualityVersion(post, context.scheduling
+      ? context
+      : { brain: context.brain, hashtagStrategy: context.hashtagStrategy }),
     checkedAt: new Date().toISOString(),
     status: blocking ? 'blocked' : warnings ? 'warnings' : 'passed',
     score,
@@ -333,7 +360,7 @@ export function runQualityGate(post, context = {}) {
   }
 }
 
-export function repairQuality(post, { brain } = {}) {
+export function repairQuality(post, { brain, hashtagStrategy } = {}) {
   const cleanNumbering = (value) => String(value || '').replace(/^\s*(?:\d+[).:-]\s*){2,}/, (prefix) => {
     const first = prefix.match(/\d+/)?.[0]
     return first ? `${first}. ` : ''
@@ -342,7 +369,7 @@ export function repairQuality(post, { brain } = {}) {
     ...post,
     hook: cleanNumbering(post?.hook),
     caption: String(post?.caption || '').replace(/[ \t]+/g, ' ').replace(/\s+\n/g, '\n').trim(),
-    hashtags: normalizeHashtags(post?.hashtags || [], { brain }),
+    hashtags: normalizeHashtags(post?.hashtags || [], { brain, strategy: strategyWithHashtagNotes(hashtagStrategy, post?.hashtagNotes, brain) }),
     slides: (post?.slides || []).map((slide) => ({ ...slide, text: cleanNumbering(slide.text) })),
     notesData: post?.notesData ? {
       ...post.notesData,

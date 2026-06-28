@@ -54,6 +54,14 @@ test('quality reports become stale after content edits', () => {
   assert.equal(isQualityStale(source, { ...report, version: QUALITY_REPORT_VERSION - 1 }), true)
 })
 
+test('quality reports become stale when the project hashtag strategy changes', () => {
+  const source = post({ hashtags: ['ai', 'workflow', 'yourbrand'] })
+  const first = { hashtagStrategy: { required: ['yourbrand'], count: 3 } }
+  const report = runQualityGate(source, first)
+  assert.equal(isQualityStale(source, report, first), false)
+  assert.equal(isQualityStale(source, report, { hashtagStrategy: { required: ['yourbrand'], count: 5 } }), true)
+})
+
 test('product checks only enforce explicit requirements and accept clear variations', () => {
   const optional = runQualityGate(post(), {
     brain: { appName: 'Optional Product', appDescription: 'Context only', styleMemory: 'Promotional voice' },
@@ -96,8 +104,24 @@ test('safe repairs normalize hashtags, whitespace, and duplicate numbering', () 
     hashtags: ['#AI', 'ai', 'bad tag'],
     slides: [{ text: '1. 1.   Start   here' }],
   }))
-  assert.deepEqual(fixed.hashtags, ['ai', 'bad', 'tag', 'fyp'])
+  assert.deepEqual(fixed.hashtags, ['ai', 'bad', 'tag'])
   assert.equal(fixed.slides[0].text, '1. Start here')
+})
+
+test('Quality Gate enforces required and banned tags and warns about generic/count mismatches', () => {
+  const context = {
+    hashtagStrategy: { required: ['yourbrand'], banned: ['hustle'], count: 5, avoidGeneric: true },
+  }
+  const report = runQualityGate(post({ hashtags: ['ai', 'hustle', 'fyp'] }), context)
+  assert.ok(report.findings.some((item) => item.id === 'hashtags-banned' && item.severity === 'blocking'))
+  assert.ok(report.findings.some((item) => item.id === 'hashtags-required' && item.severity === 'blocking'))
+  assert.ok(report.findings.some((item) => item.id === 'hashtags-generic' && item.severity === 'warning'))
+  assert.ok(report.findings.some((item) => item.id === 'hashtags-too-few' && item.severity === 'warning'))
+
+  const repaired = repairQuality(post({ hashtags: ['ai', 'hustle', 'fyp'] }), context)
+  assert.equal(repaired.hashtags.includes('hustle'), false)
+  assert.equal(repaired.hashtags.includes('fyp'), false)
+  assert.equal(repaired.hashtags.includes('yourbrand'), true)
 })
 
 test('scheduling detects invalid timezones and duplicate account slots', () => {

@@ -41,6 +41,10 @@ export function PackPicker({ selected, onChange, disabled, layout = 'default' }:
 
       {packs === null ? (
         <div className="text-[12px] text-ink-5 py-6 text-center">Loading packs…</div>
+      ) : packs.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-line bg-raised px-3 py-8 text-center text-[12px] text-ink-5">
+          Import media in the Library, or leave packs empty to use plain gradients.
+        </div>
       ) : (
         <div className={generationLayout ? 'grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-[repeat(auto-fill,minmax(112px,1fr))]' : 'grid grid-cols-2 gap-2 sm:grid-cols-3'}>
           {packs.map((pack) => {

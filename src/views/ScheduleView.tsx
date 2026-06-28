@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   CalendarClock,
@@ -59,6 +59,10 @@ function canRemove(post: ScheduledPost) {
 
 function canDismiss(post: ScheduledPost) {
   return !post.isDraft && post.status === 'posted';
+}
+
+function canSelect(post: ScheduledPost) {
+  return canRemove(post) || canDismiss(post);
 }
 
 function dayKey(post: ScheduledPost) {
@@ -137,22 +141,37 @@ export function ScheduleView({ configured, accounts, onPlanContent }: ScheduleVi
   const [dismissedIds, setDismissedIds] = useState<string[]>([]);
   const [showHidden, setShowHidden] = useState(false);
   const [undoPost, setUndoPost] = useState<ScheduledPost | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [bulkRescheduleOpen, setBulkRescheduleOpen] = useState(false);
+  const [bulkRemoveOpen, setBulkRemoveOpen] = useState(false);
+  const loadingRef = useRef(false);
+  const dataVersionRef = useRef(0);
+  const mutationPromisesRef = useRef(new Map<string, Promise<void>>());
 
-  const load = useCallback(async () => {
-    if (!configured) return;
+  const load = useCallback(async (refresh = false) => {
+    if (!configured || loadingRef.current) return;
+    loadingRef.current = true;
+    const dataVersion = dataVersionRef.current;
     setRefreshing(true);
     setError(null);
     try {
       const [nextPosts, nextDismissedIds] = await Promise.all([
-        getScheduledPosts(),
+        getScheduledPosts({ refresh }),
         getDismissedPublishedPostIds(),
       ]);
+      // A delete/reschedule may have completed while this read was in flight.
+      // Never let the older response overwrite the confirmed local mutation.
+      if (dataVersion !== dataVersionRef.current) return;
       setPosts(nextPosts);
       setDismissedIds(nextDismissedIds);
       if (!nextDismissedIds.length) setShowHidden(false);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      if (dataVersion === dataVersionRef.current) {
+        setError(caught instanceof Error ? caught.message : String(caught));
+        setPosts((current) => current ?? []);
+      }
     } finally {
+      loadingRef.current = false;
       setRefreshing(false);
     }
   }, [configured]);
@@ -211,48 +230,104 @@ export function ScheduleView({ configured, accounts, onPlanContent }: ScheduleVi
       return new Date(a).getTime() - new Date(b).getTime();
     });
   }, [displayedPosts]);
-  const openPost = (post: ScheduledPost) => setSelectedPost(post);
-  const togglePostMenu = (post: ScheduledPost) => {
+  const selectablePosts = useMemo(
+    () => showHidden ? [] : (displayedPosts || []).filter(canSelect),
+    [displayedPosts, showHidden],
+  );
+  const selectedPosts = useMemo(() => {
+    const visibleIds = new Set(selectablePosts.map((post) => post.id));
+    const selected = new Set(selectedIds);
+    return (posts || []).filter((post) => visibleIds.has(post.id) && selected.has(post.id));
+  }, [posts, selectablePosts, selectedIds]);
+  const selectedScheduledCount = selectedPosts.filter(canReschedule).length;
+  const allVisibleSelected = selectablePosts.length > 0 && selectablePosts.every((post) => selectedIds.includes(post.id));
+  const openPost = useCallback((post: ScheduledPost) => setSelectedPost(post), []);
+  const togglePostMenu = useCallback((post: ScheduledPost) => {
     setMenuPostId((current) => current === post.id ? null : post.id);
-  };
+  }, []);
 
-  const openReschedule = (post: ScheduledPost) => {
+  const openReschedule = useCallback((post: ScheduledPost) => {
     setMenuPostId(null);
     setSelectedPost(null);
     setRescheduleTarget(post);
-  };
+  }, []);
 
-  const openRemove = (post: ScheduledPost) => {
+  const openRemove = useCallback((post: ScheduledPost) => {
     setMenuPostId(null);
     setSelectedPost(null);
     setRemoveTarget(post);
+  }, []);
+
+  const toggleSelected = useCallback((post: ScheduledPost) => {
+    if (!canSelect(post)) return;
+    setSelectedIds((current) => current.includes(post.id) ? current.filter((id) => id !== post.id) : [...current, post.id]);
+  }, []);
+
+  const toggleSelectAll = () => {
+    const visible = new Set(selectablePosts.map((post) => post.id));
+    setSelectedIds((current) => allVisibleSelected
+      ? current.filter((id) => !visible.has(id))
+      : [...new Set([...current, ...visible])]);
   };
 
-  const confirmReschedule = async (post: ScheduledPost, scheduledAt: string) => {
-    await reschedulePost(post.id, scheduledAt);
-    await load();
-    setNotice('Post rescheduled.');
+  const confirmReschedule = async (post: ScheduledPost, scheduledAt: string, notify = true) => {
+    const lock = `reschedule:${post.id}`;
+    const existing = mutationPromisesRef.current.get(lock);
+    if (existing) return existing;
+    const action = (async () => {
+      const updated = await reschedulePost(post.id, scheduledAt);
+      dataVersionRef.current += 1;
+      const applyUpdate = (item: ScheduledPost) => item.id === post.id
+        ? { ...item, scheduledAt: updated.scheduledAt, status: updated.status }
+        : item;
+      setPosts((current) => current?.map(applyUpdate) || current);
+      setSelectedPost((current) => current ? applyUpdate(current) : current);
+      if (notify) setNotice('Post rescheduled.');
+    })();
+    mutationPromisesRef.current.set(lock, action);
+    try {
+      await action;
+    } finally {
+      if (mutationPromisesRef.current.get(lock) === action) mutationPromisesRef.current.delete(lock);
+    }
   };
 
-  const confirmRemove = async (post: ScheduledPost) => {
+  const confirmRemove = async (post: ScheduledPost, notify = true) => {
     if (canDismiss(post)) {
-      setDismissedIds(await dismissPublishedPost(post.id));
-      setUndoPost(post);
-      setNotice('Post removed from Schedule.');
+      const next = await dismissPublishedPost(post.id);
+      setDismissedIds((current) => [...new Set([...current, ...next, post.id])]);
+      if (notify) {
+        setUndoPost(post);
+        setNotice('Post removed from Schedule.');
+      }
       return;
     }
-    await removeScheduledPost(post.id);
-    await load();
-    setNotice(post.isDraft ? 'Draft removed.' : 'Scheduled post removed.');
+    const lock = `remove:${post.id}`;
+    const existing = mutationPromisesRef.current.get(lock);
+    if (existing) return existing;
+    const action = (async () => {
+      await removeScheduledPost(post.id);
+      dataVersionRef.current += 1;
+      setPosts((current) => current?.filter((item) => item.id !== post.id) || current);
+      setSelectedPost((current) => current?.id === post.id ? null : current);
+      setMenuPostId((current) => current === post.id ? null : current);
+      if (notify) setNotice(post.isDraft ? 'Draft removed.' : 'Scheduled post removed.');
+    })();
+    mutationPromisesRef.current.set(lock, action);
+    try {
+      await action;
+    } finally {
+      if (mutationPromisesRef.current.get(lock) === action) mutationPromisesRef.current.delete(lock);
+    }
   };
 
-  const restoreHidden = async (post: ScheduledPost) => {
+  const restoreHidden = useCallback(async (post: ScheduledPost) => {
     const next = await restorePublishedPost(post.id);
     setDismissedIds(next);
     if (!next.length) setShowHidden(false);
     setNotice('Post restored to Schedule.');
     setUndoPost(null);
-  };
+  }, []);
 
   const undoDismissal = async () => {
     if (!undoPost) return;
@@ -267,14 +342,14 @@ export function ScheduleView({ configured, accounts, onPlanContent }: ScheduleVi
         right={(
           <div className="flex items-center gap-2">
             {hiddenCount > 0 && (
-              <Button onClick={() => setShowHidden((value) => !value)}>
+              <Button onClick={() => { setSelectedIds([]); setShowHidden((value) => !value); }}>
                 {showHidden ? 'Back to Schedule' : `Show hidden posts (${hiddenCount})`}
               </Button>
             )}
             <Button onClick={onPlanContent} icon={<CalendarClock size={13} />}>Plan content</Button>
             {configured && (
               <Button
-                onClick={() => void load()}
+                onClick={() => void load(true)}
                 disabled={refreshing}
                 icon={<RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />}
               >
@@ -285,8 +360,20 @@ export function ScheduleView({ configured, accounts, onPlanContent }: ScheduleVi
         )}
       />
 
-      <div className="flex-1 overflow-y-auto p-4 sm:p-8">
-        <div className="max-w-5xl mx-auto space-y-7">
+      <div className="flex-1 overflow-y-auto">
+        <div className="page-content max-w-5xl space-y-7">
+          {selectablePosts.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-surface px-3 py-2.5 shadow-main">
+              <label className="flex items-center gap-2 text-[11px] font-medium text-ink-3">
+                <input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAll} />
+                Select all visible
+              </label>
+              <span className="mr-auto text-[11px] tabular-nums text-ink-6">{selectedPosts.length} selected</span>
+              <Button onClick={() => setBulkRescheduleOpen(true)} disabled={!selectedScheduledCount} icon={<CalendarClock size={13} />}>Bulk reschedule</Button>
+              <Button variant="danger-ghost" onClick={() => setBulkRemoveOpen(true)} disabled={!selectedPosts.length} icon={<Trash2 size={13} />}>Bulk delete/remove</Button>
+              <Button onClick={() => setSelectedIds([])} disabled={!selectedPosts.length}>Clear</Button>
+            </div>
+          )}
           {notice && (
             <div role="status" className="sticky top-0 z-30 mx-auto flex w-fit items-center gap-3 rounded-lg border border-success/30 bg-[#15231b] px-3 py-2 text-[12px] text-success shadow-main">
               <span>{notice}</span>
@@ -329,6 +416,9 @@ export function ScheduleView({ configured, accounts, onPlanContent }: ScheduleVi
                           onRemove={openRemove}
                           hidden={showHidden}
                           onRestore={restoreHidden}
+                          selectable={canSelect(post)}
+                          selected={selectedIds.includes(post.id)}
+                          onToggleSelected={toggleSelected}
                         />
                       ))}
                     </div>
@@ -371,11 +461,34 @@ export function ScheduleView({ configured, accounts, onPlanContent }: ScheduleVi
           }}
         />
       )}
+      {bulkRescheduleOpen && (
+        <BulkRescheduleModal
+          selectedPosts={selectedPosts}
+          allPosts={posts || []}
+          onClose={() => setBulkRescheduleOpen(false)}
+          onReschedule={async (post, scheduledAt) => { await confirmReschedule(post, scheduledAt, false); }}
+          onComplete={(successfulIds, failed) => {
+            setSelectedIds((current) => current.filter((id) => !successfulIds.includes(id)));
+            setNotice(`${successfulIds.length} post${successfulIds.length === 1 ? '' : 's'} rescheduled${failed ? `; ${failed} failed` : ''}.`);
+          }}
+        />
+      )}
+      {bulkRemoveOpen && (
+        <BulkRemoveModal
+          selectedPosts={selectedPosts}
+          onClose={() => setBulkRemoveOpen(false)}
+          onRemove={async (post) => { await confirmRemove(post, false); }}
+          onComplete={(successfulIds, summary) => {
+            setSelectedIds((current) => current.filter((id) => !successfulIds.includes(id)));
+            setNotice(`${summary.deleted} deleted, ${summary.hidden} hidden${summary.failed ? `, ${summary.failed} failed` : ''}.`);
+          }}
+        />
+      )}
     </>
   );
 }
 
-function PostCard({
+const PostCard = memo(function PostCard({
   post,
   accounts,
   menuOpen,
@@ -385,6 +498,9 @@ function PostCard({
   onRemove,
   hidden,
   onRestore,
+  selectable,
+  selected,
+  onToggleSelected,
 }: {
   post: ScheduledPost;
   accounts: SocialAccount[];
@@ -395,12 +511,20 @@ function PostCard({
   onRemove: (post: ScheduledPost) => void;
   hidden: boolean;
   onRestore: (post: ScheduledPost) => void;
+  selectable: boolean;
+  selected: boolean;
+  onToggleSelected: (post: ScheduledPost) => void;
 }) {
   const meta = getStatusMeta(post);
   const StatusIcon = meta.icon;
   const accountNames = post.socialAccounts.map((id) => accountLabel(id, accounts));
   return (
-    <article className="relative rounded-xl border border-line bg-surface shadow-main transition-colors hover:border-line-2 focus-within:border-line-2">
+    <article className={`relative rounded-xl border bg-surface shadow-main transition-colors hover:border-line-2 focus-within:border-line-2 ${selected ? 'border-accent ring-1 ring-accent/50' : 'border-line'}`}>
+      {selectable && (
+        <label className="absolute left-2 top-2 z-20 flex h-7 w-7 items-center justify-center rounded-md border border-line bg-surface/95 shadow-main" onClick={(event) => event.stopPropagation()}>
+          <input type="checkbox" checked={selected} onChange={() => onToggleSelected(post)} aria-label={`Select post scheduled ${formatExactDate(post.scheduledAt)}`} />
+        </label>
+      )}
       <button type="button" onClick={() => onOpen(post)} className="flex w-full gap-4 rounded-xl p-3 pr-12 text-left outline-none focus-visible:ring-2 focus-visible:ring-accent/60">
         <MediaPreview media={post.media[0]} count={post.mediaCount} compact />
         <div className="min-w-0 flex-1 py-0.5">
@@ -455,7 +579,7 @@ function PostCard({
       </div>
     </article>
   );
-}
+});
 
 function MenuButton({ children, icon, danger, onClick }: { children: string; icon: React.ReactNode; danger?: boolean; onClick: () => void }) {
   return (
@@ -487,7 +611,7 @@ function MediaPreview({ media, count = 0, compact = false }: { media?: PostMedia
       ) : video ? (
         <video src={media.url} muted playsInline preload="metadata" onError={() => setFailed(true)} className="h-full w-full object-cover" />
       ) : (
-        <img src={media.url} alt="Post preview" onError={() => setFailed(true)} className="h-full w-full object-cover" />
+        <img src={media.url} alt="Post preview" loading="lazy" decoding="async" onError={() => setFailed(true)} className="h-full w-full object-cover" />
       )}
       {media && !failed && video && (
         <span className="absolute inset-0 flex items-center justify-center bg-black/10 text-white drop-shadow"><Play size={compact ? 18 : 28} fill="currentColor" /></span>
@@ -553,7 +677,7 @@ function PostDetailModal({ post, accounts, onClose, onReschedule, onRemove, hidd
                 >
                   {isVideo(media)
                     ? <video src={media.url} muted playsInline preload="metadata" className="h-full w-full object-cover" />
-                    : <img src={media.url} alt="" className="h-full w-full object-cover" />}
+                    : <img src={media.url} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />}
                 </button>
               ))}
             </div>
@@ -602,6 +726,235 @@ function PostDetailModal({ post, accounts, onClose, onReschedule, onRemove, hidd
       </div>
     </ModalShell>
   );
+}
+
+type BulkFailure = { postId: string; message: string };
+type TimeUnit = 'minutes' | 'hours' | 'days';
+
+const TIME_UNIT_MS: Record<TimeUnit, number> = {
+  minutes: 60_000,
+  hours: 3_600_000,
+  days: 86_400_000,
+};
+
+function scheduleMinute(value: string | null) {
+  const date = new Date(value || '');
+  return Number.isNaN(date.getTime()) ? '' : date.toISOString().slice(0, 16);
+}
+
+function sharesAccount(first: ScheduledPost, second: ScheduledPost) {
+  const accounts = new Set(first.socialAccounts.map(Number));
+  return second.socialAccounts.some((id) => accounts.has(Number(id)));
+}
+
+async function runPool<T>(items: T[], concurrency: number, action: (item: T) => Promise<void>, onProgress: (done: number, total: number) => void) {
+  let next = 0;
+  let done = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const item = items[next++];
+      try {
+        await action(item);
+      } finally {
+        onProgress(++done, items.length);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+}
+
+function BulkRescheduleModal({ selectedPosts, allPosts, onClose, onReschedule, onComplete }: {
+  selectedPosts: ScheduledPost[];
+  allPosts: ScheduledPost[];
+  onClose: () => void;
+  onReschedule: (post: ScheduledPost, scheduledAt: string) => Promise<void>;
+  onComplete: (successfulIds: string[], failed: number) => void;
+}) {
+  const [openedAt] = useState(() => Date.now());
+  const [mode, setMode] = useState<'offset' | 'start'>('offset');
+  const [direction, setDirection] = useState<'later' | 'earlier'>('later');
+  const [amount, setAmount] = useState(1);
+  const [offsetUnit, setOffsetUnit] = useState<TimeUnit>('days');
+  const [date, setDate] = useState(() => localParts(new Date(Date.now() + 3_600_000).toISOString()).date);
+  const [time, setTime] = useState(() => localParts(new Date(Date.now() + 3_600_000).toISOString()).time);
+  const [spacing, setSpacing] = useState(2);
+  const [spacingUnit, setSpacingUnit] = useState<TimeUnit>('hours');
+  const [acknowledged, setAcknowledged] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [result, setResult] = useState<{ successes: number; failures: BulkFailure[]; skipped: number } | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const runningRef = useRef(false);
+
+  const eligible = useMemo(
+    () => selectedPosts.filter(canReschedule).sort((a, b) => new Date(a.scheduledAt || 0).getTime() - new Date(b.scheduledAt || 0).getTime()),
+    [selectedPosts],
+  );
+  const skipped = selectedPosts.length - eligible.length;
+  const targets = useMemo(() => {
+    const start = new Date(`${date}T${time}`).getTime();
+    const offset = amount * TIME_UNIT_MS[offsetUnit] * (direction === 'earlier' ? -1 : 1);
+    const gap = spacing * TIME_UNIT_MS[spacingUnit];
+    return eligible.map((post, index) => ({
+      post,
+      timestamp: mode === 'offset' ? new Date(post.scheduledAt || '').getTime() + offset : start + index * gap,
+    }));
+  }, [amount, date, direction, eligible, mode, offsetUnit, spacing, spacingUnit, time]);
+  const invalidTarget = targets.some((target) => !Number.isFinite(target.timestamp));
+  const pastTarget = targets.some((target) => target.timestamp <= openedAt);
+  const selectedSet = new Set(eligible.map((post) => post.id));
+  const externalPosts = allPosts.filter((post) => canReschedule(post) && !selectedSet.has(post.id));
+  const collisionCount = targets.filter((target, index) => {
+    const minute = Number.isFinite(target.timestamp) ? scheduleMinute(new Date(target.timestamp).toISOString()) : '';
+    const externalCollision = externalPosts.some((post) => scheduleMinute(post.scheduledAt) === minute && sharesAccount(target.post, post));
+    const internalCollision = targets.slice(0, index).some((other) => Number.isFinite(other.timestamp) && scheduleMinute(new Date(other.timestamp).toISOString()) === minute && sharesAccount(target.post, other.post));
+    return !!minute && (externalCollision || internalCollision);
+  }).length;
+  const dense = targets.some((target, index) => index > 0
+    && target.timestamp - targets[index - 1].timestamp < 30 * 60_000
+    && sharesAccount(target.post, targets[index - 1].post));
+  const hasWarnings = collisionCount > 0 || dense;
+  const blocked = !eligible.length || invalidTarget || pastTarget;
+
+  const submit = async () => {
+    if (runningRef.current || blocked || (hasWarnings && !acknowledged)) return;
+    setSubmitError(null);
+    if (targets.some((target) => target.timestamp <= Date.now())) {
+      setSubmitError('One or more target times have passed. Choose a later target.');
+      return;
+    }
+    runningRef.current = true;
+    setProgress({ done: 0, total: eligible.length });
+    const successfulIds: string[] = [];
+    const failures: BulkFailure[] = [];
+    await runPool(eligible, 3, async (post) => {
+      const target = targets.find((item) => item.post.id === post.id);
+      try {
+        await onReschedule(post, new Date(target!.timestamp).toISOString());
+        successfulIds.push(post.id);
+      } catch (caught) {
+        failures.push({ postId: post.id, message: caught instanceof Error ? caught.message : String(caught) });
+      }
+    }, (done, total) => setProgress({ done, total }));
+    runningRef.current = false;
+    setResult({ successes: successfulIds.length, failures, skipped });
+    onComplete(successfulIds, failures.length);
+  };
+
+  if (result) return (
+    <ModalShell title="Bulk reschedule summary" onClose={onClose}>
+      <div className="space-y-4 p-5 sm:p-6">
+        <p className="text-[13px] text-ink-2">{result.successes} rescheduled · {result.failures.length} failed · {result.skipped} skipped</p>
+        {result.failures.length > 0 && <div className="max-h-44 space-y-1 overflow-y-auto rounded-xl border border-danger/20 bg-red-500/10 p-3 text-[11px] text-danger">{result.failures.map((failure) => <p key={failure.postId}>{failure.postId}: {failure.message}</p>)}</div>}
+        <div className="flex justify-end"><Button variant="primary" onClick={onClose}>Done</Button></div>
+      </div>
+    </ModalShell>
+  );
+
+  const running = progress !== null;
+  return (
+    <ModalShell title="Bulk reschedule" onClose={onClose} closeDisabled={running} wide>
+      <div className="space-y-5 p-5 sm:p-6">
+        <p className="text-[12px] leading-relaxed text-ink-5">{eligible.length} scheduled post{eligible.length === 1 ? '' : 's'} will keep their existing caption, media, accounts, and relative ordering. {skipped ? `${skipped} unsupported selection${skipped === 1 ? '' : 's'} will be skipped.` : ''}</p>
+        <div className="grid grid-cols-2 gap-1 rounded-lg bg-raised p-1">
+          <button type="button" onClick={() => { setMode('offset'); setAcknowledged(false); }} disabled={running} className={`h-9 rounded-md text-[11px] ${mode === 'offset' ? 'bg-control text-ink' : 'text-ink-5'}`}>Shift by offset</button>
+          <button type="button" onClick={() => { setMode('start'); setAcknowledged(false); }} disabled={running} className={`h-9 rounded-md text-[11px] ${mode === 'start' ? 'bg-control text-ink' : 'text-ink-5'}`}>New start + spacing</button>
+        </div>
+        {mode === 'offset' ? (
+          <div className="grid grid-cols-3 gap-3">
+            <FieldLabel label="Direction"><select value={direction} onChange={(event) => setDirection(event.target.value as 'later' | 'earlier')} disabled={running} className="h-10 w-full rounded-lg border border-line bg-control px-3 text-[12px] text-ink"><option value="later">Later</option><option value="earlier">Earlier</option></select></FieldLabel>
+            <FieldLabel label="Amount"><input type="number" min={1} value={amount} onChange={(event) => setAmount(Math.max(1, Number(event.target.value) || 1))} disabled={running} className="h-10 w-full rounded-lg border border-line bg-control px-3 text-[12px] text-ink" /></FieldLabel>
+            <FieldLabel label="Unit"><select value={offsetUnit} onChange={(event) => setOffsetUnit(event.target.value as TimeUnit)} disabled={running} className="h-10 w-full rounded-lg border border-line bg-control px-3 text-[12px] text-ink"><option value="minutes">Minutes</option><option value="hours">Hours</option><option value="days">Days</option></select></FieldLabel>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <FieldLabel label="Start date"><input type="date" value={date} min={localParts(new Date(openedAt).toISOString()).date} onChange={(event) => setDate(event.target.value)} disabled={running} className="h-10 w-full rounded-lg border border-line bg-control px-3 text-[12px] text-ink" /></FieldLabel>
+            <FieldLabel label="Start time"><input type="time" value={time} onChange={(event) => setTime(event.target.value)} disabled={running} className="h-10 w-full rounded-lg border border-line bg-control px-3 text-[12px] text-ink" /></FieldLabel>
+            <FieldLabel label="Space every"><input type="number" min={1} value={spacing} onChange={(event) => setSpacing(Math.max(1, Number(event.target.value) || 1))} disabled={running} className="h-10 w-full rounded-lg border border-line bg-control px-3 text-[12px] text-ink" /></FieldLabel>
+            <FieldLabel label="Spacing unit"><select value={spacingUnit} onChange={(event) => setSpacingUnit(event.target.value as TimeUnit)} disabled={running} className="h-10 w-full rounded-lg border border-line bg-control px-3 text-[12px] text-ink"><option value="minutes">Minutes</option><option value="hours">Hours</option><option value="days">Days</option></select></FieldLabel>
+          </div>
+        )}
+        {invalidTarget && <p role="alert" className="rounded-lg bg-red-500/10 px-3 py-2 text-[11px] text-danger">Choose a valid date and time.</p>}
+        {pastTarget && <p role="alert" className="rounded-lg bg-red-500/10 px-3 py-2 text-[11px] text-danger">One or more posts would move into the past. Choose a later target.</p>}
+        {submitError && <p role="alert" className="rounded-lg bg-red-500/10 px-3 py-2 text-[11px] text-danger">{submitError}</p>}
+        {collisionCount > 0 && <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-[11px] text-warning">{collisionCount} target slot{collisionCount === 1 ? '' : 's'} collides with another post on the same account and minute.</p>}
+        {dense && <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-[11px] text-warning">This creates a dense schedule with less than 30 minutes between posts on the same account.</p>}
+        {hasWarnings && <label className="flex items-center gap-2 text-[11px] text-ink-4"><input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)} disabled={running} />I understand these scheduling warnings.</label>}
+        {progress && <p role="status" className="text-[12px] text-ink-4">Rescheduling {progress.done} of {progress.total}…</p>}
+        <div className="flex justify-end gap-2"><Button onClick={onClose} disabled={running}>Cancel</Button><Button variant="primary" onClick={() => void submit()} disabled={running || blocked || (hasWarnings && !acknowledged)} icon={running ? <Loader2 size={14} className="animate-spin" /> : <CalendarClock size={14} />}>{running ? 'Rescheduling…' : `Reschedule ${eligible.length}`}</Button></div>
+      </div>
+    </ModalShell>
+  );
+}
+
+function BulkRemoveModal({ selectedPosts, onClose, onRemove, onComplete }: {
+  selectedPosts: ScheduledPost[];
+  onClose: () => void;
+  onRemove: (post: ScheduledPost) => Promise<void>;
+  onComplete: (successfulIds: string[], summary: { deleted: number; hidden: number; skipped: number; failed: number }) => void;
+}) {
+  const [confirmation, setConfirmation] = useState('');
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [result, setResult] = useState<{ deleted: number; hidden: number; skipped: number; failures: BulkFailure[] } | null>(null);
+  const runningRef = useRef(false);
+  const remote = selectedPosts.filter(canRemove);
+  const local = selectedPosts.filter(canDismiss);
+  const supported = new Set([...remote, ...local].map((post) => post.id));
+  const unsupported = selectedPosts.filter((post) => !supported.has(post.id));
+  const total = remote.length + local.length;
+
+  const submit = async () => {
+    if (runningRef.current || !total || (remote.length > 0 && confirmation !== 'DELETE')) return;
+    runningRef.current = true;
+    setProgress({ done: 0, total });
+    const successfulIds: string[] = [];
+    const failures: BulkFailure[] = [];
+    let deleted = 0;
+    let hidden = 0;
+    await runPool([...remote, ...local], 3, async (post) => {
+      try {
+        await onRemove(post);
+        successfulIds.push(post.id);
+        if (canDismiss(post)) hidden++;
+        else deleted++;
+      } catch (caught) {
+        failures.push({ postId: post.id, message: caught instanceof Error ? caught.message : String(caught) });
+      }
+    }, (done, count) => setProgress({ done, total: count }));
+    runningRef.current = false;
+    const summary = { deleted, hidden, skipped: unsupported.length, failed: failures.length };
+    setResult({ deleted, hidden, skipped: unsupported.length, failures });
+    onComplete(successfulIds, summary);
+  };
+
+  if (result) return (
+    <ModalShell title="Bulk delete/remove summary" onClose={onClose}>
+      <div className="space-y-4 p-5 sm:p-6">
+        <p className="text-[13px] text-ink-2">{result.deleted} deleted · {result.hidden} hidden · {result.skipped} skipped · {result.failures.length} failed</p>
+        {result.failures.length > 0 && <div className="max-h-44 space-y-1 overflow-y-auto rounded-xl border border-danger/20 bg-red-500/10 p-3 text-[11px] text-danger">{result.failures.map((failure) => <p key={failure.postId}>{failure.postId}: {failure.message}</p>)}</div>}
+        <div className="flex justify-end"><Button variant="primary" onClick={onClose}>Done</Button></div>
+      </div>
+    </ModalShell>
+  );
+
+  const running = progress !== null;
+  return (
+    <ModalShell title="Bulk delete/remove" onClose={onClose} closeDisabled={running}>
+      <div className="space-y-4 p-5 sm:p-6">
+        <div className="space-y-2 rounded-xl border border-danger/20 bg-red-500/10 p-3.5 text-[12px] leading-relaxed text-ink-3">
+          <p><strong>{remote.length}</strong> scheduled post{remote.length === 1 ? '' : 's'}/draft{remote.length === 1 ? '' : 's'} will be deleted from Postbridge and cannot publish.</p>
+          <p><strong>{local.length}</strong> published post{local.length === 1 ? '' : 's'} will only be hidden from Schedule. Live posts and analytics remain untouched.</p>
+          <p><strong>{unsupported.length}</strong> unsupported post{unsupported.length === 1 ? '' : 's'} will be skipped.</p>
+        </div>
+        {remote.length > 0 && <FieldLabel label="Type DELETE to confirm destructive removal"><input autoFocus value={confirmation} onChange={(event) => setConfirmation(event.target.value)} disabled={running} className="h-10 w-full rounded-lg border border-line bg-control px-3 text-[12px] text-ink outline-none focus:border-danger" /></FieldLabel>}
+        {progress && <p role="status" className="text-[12px] text-ink-4">Removing {progress.done} of {progress.total}…</p>}
+        <div className="flex justify-end gap-2"><Button onClick={onClose} disabled={running}>Cancel</Button><Button variant="danger-ghost" onClick={() => void submit()} disabled={running || !total || (remote.length > 0 && confirmation !== 'DELETE')} icon={running ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}>{running ? 'Removing…' : `Remove ${total}`}</Button></div>
+      </div>
+    </ModalShell>
+  );
+}
+
+function FieldLabel({ label, children }: { label: string; children: React.ReactNode }) {
+  return <label className="text-[11px] font-medium text-ink-4">{label}<div className="mt-1.5">{children}</div></label>;
 }
 
 function RescheduleModal({ post, onClose, onConfirm }: { post: ScheduledPost; onClose: () => void; onConfirm: (scheduledAt: string) => Promise<void> }) {
@@ -708,8 +1061,8 @@ function ModalShell({ title, onClose, closeDisabled, wide, children }: { title: 
   }, [closeDisabled, onClose]);
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby={titleId} className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-3 backdrop-blur-sm" onMouseDown={(event) => event.target === event.currentTarget && !closeDisabled && onClose()}>
-      <div className={`max-h-[94vh] w-full overflow-y-auto rounded-2xl border border-line bg-surface shadow-2xl ${wide ? 'max-w-3xl' : 'max-w-md'}`}>
+    <div role="dialog" aria-modal="true" aria-labelledby={titleId} className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && !closeDisabled && onClose()}>
+      <div className={`modal-shell max-h-[94vh] w-full overflow-y-auto ${wide ? 'max-w-3xl' : 'max-w-md'}`}>
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-line bg-surface/95 px-5 py-4 backdrop-blur">
           <h2 id={titleId} className="text-[14px] font-semibold text-ink">{title}</h2>
           <button type="button" onClick={onClose} disabled={closeDisabled} aria-label="Close dialog" className="flex h-8 w-8 items-center justify-center rounded-lg text-ink-5 hover:bg-white/[0.06] hover:text-ink disabled:opacity-40"><X size={16} /></button>
@@ -721,7 +1074,7 @@ function ModalShell({ title, onClose, closeDisabled, wide, children }: { title: 
 }
 
 function Loading() {
-  return <div className="flex items-center justify-center gap-2 py-16 text-[13px] text-ink-5"><Loader2 size={14} className="animate-spin text-accent" /> Loading from Postbridge…</div>;
+  return <div className="loading-state"><Loader2 size={14} className="animate-spin text-accent" /> Loading from Postbridge…</div>;
 }
 
 function Empty({ text }: { text: string }) {

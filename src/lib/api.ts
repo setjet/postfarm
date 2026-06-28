@@ -1,6 +1,6 @@
-// Frontend API client. All calls go to the local Slidesmith server (proxied at
+// Frontend API client. All calls go to the local Postfarm server (proxied at
 // /api in dev, same-origin in production). The server holds the keys and talks
-// to Claude + post-bridge — the browser never sees the secrets in a request.
+// to configured AI providers + post-bridge — the browser never sees the secrets.
 import type {
   AppConfig,
   Project,
@@ -20,20 +20,38 @@ import type {
   QualityReport,
 } from '../types';
 
-async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`/api${path}`, {
-    headers: { 'content-type': 'application/json' },
-    cache: 'no-store', // always hit the server — never a stale Schedule/Results list
-    ...init,
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const payload = body as { error?: string; qualityReport?: QualityReport };
-    const error = new Error(payload.error || res.statusText) as Error & { qualityReport?: QualityReport };
-    if (payload.qualityReport) error.qualityReport = payload.qualityReport;
-    throw error;
+const inFlightReads = new Map<string, Promise<unknown>>();
+const API_DEBUG = import.meta.env.DEV && import.meta.env.VITE_API_DEBUG === '1';
+
+async function executeRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const started = performance.now();
+  try {
+    const res = await fetch(`/api${path}`, {
+      headers: { 'content-type': 'application/json' },
+      cache: 'no-store', // the short-lived, identity-scoped cache lives on the server
+      ...init,
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const payload = body as { error?: string; qualityReport?: QualityReport };
+      const error = new Error(payload.error || res.statusText) as Error & { qualityReport?: QualityReport };
+      if (payload.qualityReport) error.qualityReport = payload.qualityReport;
+      throw error;
+    }
+    return body as T;
+  } finally {
+    if (API_DEBUG) console.info('[api:frontend]', { method: init?.method || 'GET', path, ms: Math.round(performance.now() - started) });
   }
-  return body as T;
+}
+
+async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = String(init?.method || 'GET').toUpperCase();
+  if (method !== 'GET' || init?.body || init?.signal) return executeRequest<T>(path, init);
+  const existing = inFlightReads.get(path);
+  if (existing) return existing as Promise<T>;
+  const request = executeRequest<T>(path, init).finally(() => inFlightReads.delete(path));
+  inFlightReads.set(path, request);
+  return request;
 }
 
 export const getConfig = () => req<AppConfig>('/config');
@@ -54,7 +72,7 @@ export const createProject = (name?: string) =>
 
 export const updateProject = (
   id: string,
-  patch: Partial<Pick<Project, 'name' | 'brain' | 'defaults' | 'imagePacks'>>
+  patch: Partial<Pick<Project, 'name' | 'brain' | 'defaults' | 'imagePacks' | 'hashtagStrategy'>>
 ) => req<AppConfig>(`/projects/${id}`, { method: 'PUT', body: JSON.stringify(patch) });
 
 export const deleteProject = (id: string) =>
@@ -89,6 +107,7 @@ export interface GenerateOptions {
   topic?: string;
   folderIds?: string[];
   generationNotes?: string;
+  hashtagNotes?: string;
 }
 
 export const generate = (count = 4, options: GenerateOptions = {}) =>
@@ -224,14 +243,23 @@ export interface ScheduleVideoPayload {
 export const scheduleVideo = (payload: ScheduleVideoPayload) =>
   req<unknown>('/schedule/video', { method: 'POST', body: JSON.stringify(payload) });
 
+export interface ReschedulePostResult {
+  postId: string;
+  scheduledAt: string;
+  status: 'scheduled';
+}
+
 export const reschedulePost = (id: string, scheduledAt: string) =>
-  req<unknown>(`/posts/${encodeURIComponent(id)}/schedule`, {
+  req<ReschedulePostResult>(`/posts/${encodeURIComponent(id)}/schedule`, {
     method: 'PATCH',
     body: JSON.stringify({ scheduledAt }),
   });
 
-export const removeScheduledPost = (id: string) =>
-  req<{ ok: true }>(`/posts/${encodeURIComponent(id)}`, { method: 'DELETE' });
+export const removeScheduledPost = async (id: string) => {
+  const result = await req<{ deleted: true; postId: string; status?: string }>(`/posts/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  scheduledPostMediaCache.delete(id);
+  return result;
+};
 
 export const getDismissedPublishedPostIds = () => req<string[]>('/schedule-dismissals');
 
@@ -279,8 +307,8 @@ export const scheduleContentPlanSlot = (planId: string, slotId: string, payload:
 // post-bridge → ScheduledPost. post-bridge stores caption + media + schedule;
 // it has no concept of our per-slide text, so the Schedule view shows the
 // rendered images + caption + status.
-export async function getScheduledPosts(): Promise<ScheduledPost[]> {
-  const raw = await req<Array<Record<string, unknown>>>('/posts');
+export async function getScheduledPosts(options: { refresh?: boolean } = {}): Promise<ScheduledPost[]> {
+  const raw = await req<Array<Record<string, unknown>>>(options.refresh ? '/posts?refresh=1' : '/posts');
   return raw.map((p) => ({
     id: String(p.id),
     caption: String(p.caption || ''),
@@ -312,8 +340,16 @@ export async function getScheduledPosts(): Promise<ScheduledPost[]> {
   }));
 }
 
-export const getScheduledPostMedia = (id: string) =>
-  req<ScheduledPost['media']>(`/posts/${encodeURIComponent(id)}/media`);
+const scheduledPostMediaCache = new Map<string, { media: ScheduledPost['media']; storedAt: number }>();
+const SCHEDULE_MEDIA_TTL_MS = 5 * 60_000;
+
+export async function getScheduledPostMedia(id: string) {
+  const cached = scheduledPostMediaCache.get(id);
+  if (cached && Date.now() - cached.storedAt < SCHEDULE_MEDIA_TTL_MS) return cached.media;
+  const media = await req<ScheduledPost['media']>(`/posts/${encodeURIComponent(id)}/media`);
+  scheduledPostMediaCache.set(id, { media, storedAt: Date.now() });
+  return media;
+}
 
 function mapResult(a: Record<string, unknown>): PostResult {
   return {

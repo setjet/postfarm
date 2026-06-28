@@ -1,15 +1,14 @@
 // Local trend research store. Trend items are scoped per project and used as
 // market research only; generation prompts tell the model to study patterns
 // without copying creators.
-import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { logger } from './log.js'
+import { getDataDir } from './paths.js'
 
 const log = logger('trends')
-const DEFAULT_DIR = process.env.VERCEL ? join(tmpdir(), '.slidesmith') : join(homedir(), '.slidesmith')
-const DIR = process.env.SLIDESMITH_DIR || DEFAULT_DIR
+const DIR = getDataDir()
 const INDEX_PATH = join(DIR, 'trends.json')
 const APIFY = 'https://api.apify.com/v2/acts'
 const DEFAULT_TREND_ACTOR = 'clockworks/tiktok-scraper'

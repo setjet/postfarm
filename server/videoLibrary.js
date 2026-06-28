@@ -1,7 +1,6 @@
 // Local video asset library. Mirrors the image library's local-first storage,
 // but keeps video records and files completely separate so carousel/image
 // workflows remain untouched.
-import { homedir, tmpdir } from 'node:os'
 import { join, extname, basename, dirname, resolve } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -9,11 +8,11 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, rmSync } from 'node:fs'
 import { logger } from './log.js'
 import { UNCATEGORIZED_FOLDER_ID, VIDEOS_FOLDER_ID, safeFolderId } from './folders.js'
+import { getDataDir } from './paths.js'
 
 const execFileAsync = promisify(execFile)
 const log = logger('videos')
-const DEFAULT_DIR = process.env.VERCEL ? join(tmpdir(), '.slidesmith') : join(homedir(), '.slidesmith')
-const DIR = process.env.SLIDESMITH_DIR || DEFAULT_DIR
+const DIR = getDataDir()
 const MEDIA_DIR = join(DIR, 'videos')
 const INDEX_PATH = join(DIR, 'videos.json')
 const APIFY = 'https://api.apify.com/v2/acts'

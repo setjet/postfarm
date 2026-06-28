@@ -4,8 +4,8 @@ const BASE = 'https://openrouter.ai/api/v1'
 
 // Recommended (optional) attribution headers for OpenRouter.
 const ATTRIBUTION = {
-  'HTTP-Referer': 'https://github.com/slidesmith',
-  'X-Title': 'Slidesmith',
+  'HTTP-Referer': 'https://github.com/postfarm/postfarm',
+  'X-Title': 'Postfarm',
 }
 
 // Public — no key required. Returns the full catalog so the UI can list models.

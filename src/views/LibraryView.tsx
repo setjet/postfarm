@@ -231,7 +231,7 @@ export function LibraryView({ hasApify }: LibraryViewProps) {
     try {
       setImages(await deleteLibraryImage(id));
       setPreview((current) => (current?.id === id ? null : current));
-      window.dispatchEvent(new Event('slidesmith:library-changed'));
+      window.dispatchEvent(new Event('postfarm:library-changed'));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -242,7 +242,7 @@ export function LibraryView({ hasApify }: LibraryViewProps) {
     try {
       setVideos(await deleteVideo(id));
       setVideoPreview((current) => (current?.id === id ? null : current));
-      window.dispatchEvent(new Event('slidesmith:library-changed'));
+      window.dispatchEvent(new Event('postfarm:library-changed'));
     } catch (e) {
       setVideoError(e instanceof Error ? e.message : String(e));
     }
@@ -546,7 +546,6 @@ export function LibraryView({ hasApify }: LibraryViewProps) {
             <video
               src={videoPreview.url}
               controls
-              autoPlay
               playsInline
               className="max-h-[92vh] max-w-[92vw] rounded-xl border border-line bg-black object-contain shadow-main"
             />

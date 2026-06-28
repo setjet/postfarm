@@ -1,19 +1,18 @@
-// Image library: the bundled aesthetic packs (shipped in public/library/) plus
-// any images the user scrapes from Pinterest with their own Apify key. Scraped
-// images are downloaded to ~/.slidesmith/library/ so the browser can composite
+// Image library: optional bundled packs plus any images the user imports or
+// scrapes with their own Apify key. User-managed images are downloaded to the
+// local Postfarm data directory so the browser can composite
 // them onto the export canvas same-origin (remote URLs would taint it).
-import { homedir, tmpdir } from 'node:os'
 import { join, dirname, extname, basename, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, rmSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { logger } from './log.js'
 import { BUNDLED_FOLDER_ID, UNCATEGORIZED_FOLDER_ID, listFolders, safeFolderId } from './folders.js'
+import { getDataDir } from './paths.js'
 
 const log = logger('scrape')
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const DEFAULT_DIR = process.env.VERCEL ? join(tmpdir(), '.slidesmith') : join(homedir(), '.slidesmith')
-const DIR = process.env.SLIDESMITH_DIR || DEFAULT_DIR
+const DIR = getDataDir()
 const MEDIA_DIR = join(DIR, 'library')
 const INDEX_PATH = join(DIR, 'library.json')
 const BUNDLED_MANIFEST = join(__dirname, '..', 'public', 'library', 'manifest.json')
@@ -46,7 +45,7 @@ function bundled() {
   )
 }
 
-// Names of the bundled aesthetic packs (used as the default selection for new projects).
+// Names of optional bundled packs. The public manifest is empty by default.
 export function bundledPackNames() {
   const m = readJson(BUNDLED_MANIFEST, { packs: [] })
   return (m.packs || []).map((p) => p.name)
@@ -122,7 +121,7 @@ export function listLibrary() {
       return path && existsSync(path)
     })
     .map(publicRecord)
-  // Scraped first (newest), then the bundled packs.
+  // User-managed media first (newest), then any optional bundled packs.
   return [...scraped, ...bundled()]
 }
 

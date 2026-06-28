@@ -8,14 +8,16 @@ interface ViewHeaderProps {
 
 export function ViewHeader({ title, subtitle, right }: ViewHeaderProps) {
   return (
-    <div className="px-4 sm:px-8 py-4 border-b border-line flex items-center justify-between gap-4 shrink-0">
+    <header className="shrink-0 px-4 pb-2 pt-7 sm:px-8 sm:pb-3 sm:pt-9">
+      <div className="mx-auto flex w-full max-w-6xl flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
       <div className="min-w-0">
-        <h1 className="text-[24px] sm:text-[26px] font-semibold text-ink leading-tight">{title}</h1>
+        <h1 className="text-xl font-semibold tracking-tight text-ink sm:text-2xl">{title}</h1>
         {subtitle && (
-          <p className="text-[12px] text-ink-5 mt-1 max-w-2xl leading-relaxed">{subtitle}</p>
+          <p className="mt-2 max-w-2xl text-[12px] leading-5 text-ink-5">{subtitle}</p>
         )}
       </div>
-      {right && <div className="flex shrink-0 items-center justify-end gap-2">{right}</div>}
-    </div>
+      {right && <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:shrink-0 sm:justify-end">{right}</div>}
+      </div>
+    </header>
   );
 }

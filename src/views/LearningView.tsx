@@ -6,6 +6,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import type { LearningMemory, PostResult } from '../types';
 import { Button } from '../components/Button';
+import { ViewHeader } from '../components/ViewHeader';
 import { clearLearning, getLearning, getResults, rebuildLearning } from '../lib/api';
 
 interface LearningViewProps {
@@ -106,21 +107,17 @@ export function LearningView({ configured, onUseIdea }: LearningViewProps) {
 
   return (
     <>
-      <header className="shrink-0 border-b border-line px-4 py-4 sm:px-8">
-        <div className="mx-auto flex w-full max-w-6xl flex-col items-start justify-between gap-3 sm:flex-row sm:items-center sm:gap-4">
-          <div className="min-w-0">
-            <h1 className="text-[24px] font-semibold leading-tight text-ink sm:text-[26px]">Learning</h1>
-            <p className="mt-1 text-[12px] leading-relaxed text-ink-5">Patterns from your published content that guide future generations.</p>
-          </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-3">
-            {memory?.generatedAt && <span className="hidden text-[10px] text-ink-6 lg:block">Last rebuilt {formatDate(memory.generatedAt, true)}</span>}
-            {configured && <Button variant="primary" icon={rebuilding ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} onClick={() => void rebuild()} disabled={rebuilding || clearing} aria-busy={rebuilding} aria-live="polite">{rebuilding ? 'Rebuilding…' : 'Rebuild insights'}</Button>}
-          </div>
-        </div>
-      </header>
+      <ViewHeader
+        title="Learning"
+        subtitle="Patterns from your published content that guide future generations."
+        right={<>
+          {memory?.generatedAt && <span className="hidden text-[10px] text-ink-6 lg:block">Last rebuilt {formatDate(memory.generatedAt, true)}</span>}
+          {configured && <Button variant="primary" icon={rebuilding ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} onClick={() => void rebuild()} disabled={rebuilding || clearing} aria-busy={rebuilding} aria-live="polite">{rebuilding ? 'Rebuilding…' : 'Rebuild insights'}</Button>}
+        </>}
+      />
 
       <div className="flex-1 overflow-y-auto">
-        <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-8 sm:py-8">
+        <main className="page-content">
           {!configured ? <EmptyState text="Add your Postbridge API key in Settings to build insights from published content." /> : loading ? <Loading /> : (
             <>
               {error && <p role="alert" className="mb-5 border-l-2 border-danger bg-red-500/[0.06] px-3 py-2 text-[12px] text-danger">{error}</p>}

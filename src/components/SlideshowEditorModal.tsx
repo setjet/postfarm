@@ -17,11 +17,11 @@ type Tab = 'post' | 'slide';
 function defaultNotesData(slideshow: Slideshow): NotesData {
   return slideshow.notesData || {
     hookText: slideshow.hook || slideshow.slides[0]?.text || '',
-    noteTitle: 'notes',
-    noteDate: 'today, 9:41 am',
+    noteTitle: 'quick notes',
+    noteDate: 'today',
     points: [
-      { heading: 'start with the hook', body: 'make ppl curious before u explain anything.' },
-      { heading: 'keep it private', body: 'notes work bc they feel like something u found.' },
+      { heading: 'start with the hook', body: 'make people curious before explaining the takeaway.' },
+      { heading: 'keep it skimmable', body: 'use short points that feel easy to save and revisit.' },
       { heading: 'make it useful', body: 'give them one thing they can try today.' },
     ],
   };
@@ -106,7 +106,7 @@ export function SlideshowEditorModal({ slideshow, onClose, onSave }: SlideshowEd
       await onSave({
         slides,
         caption,
-        hashtags: normalizeHashtags(hashtags),
+        hashtags: normalizeHashtags(hashtags, { max: 20, includeFyp: false }),
         hook: isNotes ? notesData.hookText : undefined,
         notesData: isNotes ? notesData : undefined,
         format: slideshow.format,
@@ -117,9 +117,12 @@ export function SlideshowEditorModal({ slideshow, onClose, onSave }: SlideshowEd
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/55 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+    <div className="modal-backdrop !p-2 sm:!p-4" onClick={onClose}>
       <div
-        className="bg-surface border border-line rounded-2xl w-[96vw] max-w-[1400px] h-[96vh] max-h-[96vh] flex flex-col sm:flex-row overflow-hidden shadow-main fade-up"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Edit slideshow"
+        className="modal-shell fade-up flex h-[96vh] max-h-[96vh] w-[96vw] max-w-[1400px] flex-col sm:flex-row"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Preview */}
@@ -179,7 +182,7 @@ export function SlideshowEditorModal({ slideshow, onClose, onSave }: SlideshowEd
                       <input
                         value={notesData.noteTitle || ''}
                         onChange={(e) => patchNotes({ noteTitle: e.target.value })}
-                        placeholder="notes"
+                        placeholder="quick notes"
                         className="w-full h-10 bg-raised border border-line rounded-lg px-3 text-[13px] text-ink outline-none focus:border-line-2"
                       />
                     </div>
@@ -305,7 +308,7 @@ export function SlideshowEditorModal({ slideshow, onClose, onSave }: SlideshowEd
             )}
           </div>
 
-          <div className="px-4 py-3 border-t border-line bg-[#101010] flex justify-end gap-2">
+          <div className="flex justify-end gap-2 border-t border-line bg-surface/95 px-4 py-3 backdrop-blur">
             <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
             <Button
               variant="primary"

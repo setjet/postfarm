@@ -1,18 +1,19 @@
-// Local, file-based persistence. Slidesmith is a single-user tool, so all state
+// Local, file-based persistence. Postfarm is a single-user tool, so all state
 // lives in a small JSON config file + a queue file under the user's home dir.
 // No database — post-bridge holds the scheduled posts and results.
 //
 // A "project" is one brand/account you generate for. Only the Brain and the
 // default post-bridge accounts differ per project; the API keys and model are
 // global. The queue (generated-but-unscheduled drafts) is per project.
-import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { bundledPackNames } from './library.js'
+import { folderExists } from './folders.js'
 import { DEFAULT_DEEPSEEK_MODEL } from './ai.js'
+import { resolveHashtagStrategy } from './hashtags.js'
+import { getDataDir } from './paths.js'
 
-const DEFAULT_DIR = process.env.VERCEL ? join(tmpdir(), '.slidesmith') : join(homedir(), '.slidesmith')
-const DIR = process.env.SLIDESMITH_DIR || DEFAULT_DIR
+const DIR = getDataDir()
 const CONFIG_PATH = join(DIR, 'config.json')
 const QUEUE_PATH = join(DIR, 'queue.json')
 const PLANS_PATH = join(DIR, 'plans.json')
@@ -26,6 +27,12 @@ const DEFAULT_BRAIN = {
   styleMemory: '',
 }
 const DEFAULT_DEFAULTS = { socialAccountIds: [], mode: 'draft' }
+const ENV_KEYS = {
+  postbridge: process.env.POSTBRIDGE_API_KEY || '',
+  openrouter: process.env.OPENROUTER_API_KEY || '',
+  apify: process.env.APIFY_API_KEY || '',
+  deepseek: process.env.DEEPSEEK_API_KEY || '',
+}
 
 function ensureDir() {
   if (!existsSync(DIR)) mkdirSync(DIR, { recursive: true })
@@ -44,15 +51,26 @@ function writeJson(path, value) {
 function newId(prefix) {
   return `${prefix}-${Date.now()}-${Math.round(Math.random() * 1e6)}`
 }
-function makeProject(name, brain, defaults, imagePacks) {
+
+function normalizeImagePacks(value) {
+  if (!Array.isArray(value)) return bundledPackNames()
+  const bundled = new Set(bundledPackNames())
+  return [...new Set(value.filter((selection) => {
+    if (typeof selection !== 'string' || !selection) return false
+    if (selection.startsWith('folder:')) return folderExists(selection)
+    return bundled.has(selection)
+  }))]
+}
+
+function makeProject(name, brain, defaults, imagePacks, hashtagStrategy) {
   return {
     id: newId('p'),
-    name: name || 'Project 1',
+    name: name || 'Example Project',
     brain: { ...DEFAULT_BRAIN, ...brain },
     defaults: { ...DEFAULT_DEFAULTS, ...defaults },
-    // Which background packs generation draws from. Defaults to all bundled
-    // packs so a fresh project generates with images out of the box. Empty = gradients.
-    imagePacks: imagePacks ?? bundledPackNames(),
+    hashtagStrategy: resolveHashtagStrategy(hashtagStrategy, { ...DEFAULT_BRAIN, ...brain }),
+    // Which background packs generation draws from. Empty = gradients.
+    imagePacks: normalizeImagePacks(imagePacks),
   }
 }
 
@@ -66,13 +84,14 @@ export function getConfig() {
         name: p.name || 'Project',
         brain: { ...DEFAULT_BRAIN, ...p.brain },
         defaults: { ...DEFAULT_DEFAULTS, ...p.defaults },
-        imagePacks: p.imagePacks ?? bundledPackNames(),
+        hashtagStrategy: resolveHashtagStrategy(p.hashtagStrategy, { ...DEFAULT_BRAIN, ...p.brain }),
+        imagePacks: normalizeImagePacks(p.imagePacks),
       }))
     : null
 
   if (!projects) {
     // Migrate a pre-projects config, or create the first project.
-    const p = makeProject(s.brain?.appName || 'Project 1', s.brain, s.defaults)
+    const p = makeProject(s.brain?.appName || 'Example Project', s.brain, s.defaults)
     projects = [p]
   }
 
@@ -83,7 +102,7 @@ export function getConfig() {
   const openrouterModel = s.models?.openrouter || s.model || 'openai/gpt-4o-mini'
   const deepseekModel = s.models?.deepseek || s.deepseekModel || DEFAULT_DEEPSEEK_MODEL
   const cfg = {
-    keys: { postbridge: '', openrouter: '', apify: '', deepseek: '', ...s.keys },
+    keys: { ...ENV_KEYS, ...s.keys },
     aiProvider: s.aiProvider === 'deepseek' ? 'deepseek' : 'openrouter',
     model: openrouterModel,
     models: {
@@ -152,7 +171,10 @@ export function updateProject(id, patch) {
           name: patch.name ?? p.name,
           brain: patch.brain ? { ...p.brain, ...patch.brain } : p.brain,
           defaults: patch.defaults ? { ...p.defaults, ...patch.defaults } : p.defaults,
-          imagePacks: patch.imagePacks ?? p.imagePacks,
+          hashtagStrategy: patch.hashtagStrategy
+            ? resolveHashtagStrategy({ ...p.hashtagStrategy, ...patch.hashtagStrategy }, patch.brain ? { ...p.brain, ...patch.brain } : p.brain)
+            : p.hashtagStrategy,
+          imagePacks: patch.imagePacks !== undefined ? normalizeImagePacks(patch.imagePacks) : p.imagePacks,
         }
       : p
   )
@@ -171,7 +193,7 @@ export function removeImagePackFromProjects(packId) {
 export function deleteProject(id) {
   const c = getConfig()
   let projects = c.projects.filter((p) => p.id !== id)
-  if (!projects.length) projects = [makeProject('Project 1')]
+  if (!projects.length) projects = [makeProject('Example Project')]
   const activeProjectId = c.activeProjectId === id ? projects[0].id : c.activeProjectId
   removeQueueFor(id)
   removePlansFor(id)

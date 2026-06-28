@@ -5,9 +5,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 test('published Schedule dismissals persist, restore, and discard stale remote IDs', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'slidesmith-dismissals-'))
-  const previous = process.env.SLIDESMITH_DIR
-  process.env.SLIDESMITH_DIR = directory
+  const directory = mkdtempSync(join(tmpdir(), 'postfarm-dismissals-'))
+  const previous = process.env.POSTFARM_DIR
+  process.env.POSTFARM_DIR = directory
   try {
     const first = await import(`./store.js?dismissals=${Date.now()}`)
     assert.deepEqual(first.dismissPublishedPost('project-one', 'remote-1'), ['remote-1'])
@@ -19,16 +19,16 @@ test('published Schedule dismissals persist, restore, and discard stale remote I
     assert.deepEqual(reloaded.restorePublishedPost('project-one', 'remote-2'), [])
     assert.deepEqual(reloaded.getDismissedPublishedPostIds('project-one'), [])
   } finally {
-    if (previous === undefined) delete process.env.SLIDESMITH_DIR
-    else process.env.SLIDESMITH_DIR = previous
+    if (previous === undefined) delete process.env.POSTFARM_DIR
+    else process.env.POSTFARM_DIR = previous
     rmSync(directory, { recursive: true, force: true })
   }
 })
 
 test('deleted media references are replaced only from the same folder or marked unavailable', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'slidesmith-asset-refs-'))
-  const previous = process.env.SLIDESMITH_DIR
-  process.env.SLIDESMITH_DIR = directory
+  const directory = mkdtempSync(join(tmpdir(), 'postfarm-asset-refs-'))
+  const previous = process.env.POSTFARM_DIR
+  process.env.POSTFARM_DIR = directory
   try {
     const store = await import(`./store.js?asset-refs=${Date.now()}`)
     const projectId = store.getActiveProject().id
@@ -59,8 +59,39 @@ test('deleted media references are replaced only from the same folder or marked 
     assert.equal(unavailable.slides[0].imageUnavailable, true)
     assert.equal(unavailable.mediaUnavailable, true)
   } finally {
-    if (previous === undefined) delete process.env.SLIDESMITH_DIR
-    else process.env.SLIDESMITH_DIR = previous
+    if (previous === undefined) delete process.env.POSTFARM_DIR
+    else process.env.POSTFARM_DIR = previous
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('project hashtag strategy defaults safely and persists normalized project rules', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'postfarm-hashtag-strategy-'))
+  const previous = process.env.POSTFARM_DIR
+  process.env.POSTFARM_DIR = directory
+  try {
+    const store = await import(`./store.js?hashtag-strategy=${Date.now()}`)
+    const project = store.getActiveProject()
+    assert.equal(project.hashtagStrategy.count, 8)
+    assert.equal(project.hashtagStrategy.avoidGeneric, true)
+    store.updateProject(project.id, {
+      hashtagStrategy: {
+        required: ['#YourBrand'],
+        banned: ['#FYP'],
+        style: 'niche',
+        count: 5,
+      },
+    })
+
+    const reloaded = await import(`./store.js?hashtag-strategy-reload=${Date.now()}`)
+    const strategy = reloaded.getActiveProject().hashtagStrategy
+    assert.deepEqual(strategy.required, ['yourbrand'])
+    assert.deepEqual(strategy.banned, ['fyp'])
+    assert.equal(strategy.style, 'niche')
+    assert.equal(strategy.count, 5)
+  } finally {
+    if (previous === undefined) delete process.env.POSTFARM_DIR
+    else process.env.POSTFARM_DIR = previous
     rmSync(directory, { recursive: true, force: true })
   }
 })

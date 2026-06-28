@@ -12,7 +12,7 @@ import { captionWithHashtags } from './lib/hashtags';
 import { PlannerJobController } from './lib/plannerJobController';
 import * as api from './lib/api';
 import type { GenerateOptions } from './lib/api';
-import type { AppConfig, Project, Slideshow, Slide, SocialAccount, BrainState, ViewKey, NotesData } from './types';
+import type { AppConfig, Project, Slideshow, Slide, SocialAccount, BrainState, HashtagStrategy, ViewKey, NotesData } from './types';
 
 const TrendsView = lazy(() => import('./views/TrendsView').then((module) => ({ default: module.TrendsView })));
 const LibraryView = lazy(() => import('./views/LibraryView').then((module) => ({ default: module.LibraryView })));
@@ -80,7 +80,7 @@ export default function App() {
         if (!hasAiKey && !cfg.keys.postbridge) setActiveView('settings');
         if (cfg.keys.postbridge) loadAccounts();
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Could not reach the Slidesmith server.');
+        setError(e instanceof Error ? e.message : 'Could not reach the Postfarm server.');
       }
     })();
   }, [loadAccounts]);
@@ -90,8 +90,8 @@ export default function App() {
       void api.getQueue().then(setQueue).catch(() => {});
       void api.getConfig().then(setConfig).catch(() => {});
     };
-    window.addEventListener('slidesmith:library-changed', refreshLibraryReferences);
-    return () => window.removeEventListener('slidesmith:library-changed', refreshLibraryReferences);
+    window.addEventListener('postfarm:library-changed', refreshLibraryReferences);
+    return () => window.removeEventListener('postfarm:library-changed', refreshLibraryReferences);
   }, []);
 
   const generate = async (count: number, options: GenerateOptions = {}) => {
@@ -283,6 +283,14 @@ export default function App() {
     await api.updateProject(activeProject.id, { brain });
   };
 
+  const saveHashtagStrategy = async (hashtagStrategy: HashtagStrategy) => {
+    if (!activeProject) return;
+    setConfig((current) => current
+      ? { ...current, projects: current.projects.map((project) => project.id === activeProject.id ? { ...project, hashtagStrategy } : project) }
+      : current);
+    await api.updateProject(activeProject.id, { hashtagStrategy });
+  };
+
   const switchProject = async (id: string) => {
     setConfig(await api.activateProject(id));
     setQueue(await api.getQueue());
@@ -326,7 +334,7 @@ export default function App() {
           setPlannerOpen(true);
         }}
       />
-      <main className="flex-1 h-full overflow-hidden flex flex-col app-main">
+      <main className="app-main flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden pt-14 md:h-full md:pt-0">
         {error && activeView !== 'settings' && (
           <div className="px-4 sm:px-8 py-2 bg-red-500/10 border-b border-red-500/20 text-[12px] text-danger">
             {error}
@@ -374,7 +382,7 @@ export default function App() {
           )}
           {activeView === 'results' && <ResultsView configured={hasPostbridge} />}
           {activeView === 'learning' && <LearningView key={activeProject.id} configured={hasPostbridge} onUseIdea={openLearningIdea} />}
-          {activeView === 'brain' && <BrainView brain={activeProject.brain} onChange={saveBrain} />}
+          {activeView === 'brain' && <BrainView key={activeProject.id} brain={activeProject.brain} hashtagStrategy={activeProject.hashtagStrategy} onChange={saveBrain} onHashtagStrategyChange={saveHashtagStrategy} />}
           {activeView === 'settings' && (
             <SettingsView
               key={activeProject.id}

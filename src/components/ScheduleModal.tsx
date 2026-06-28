@@ -123,9 +123,12 @@ export function ScheduleModal({ slideshow, accounts, defaults, onClose, onConfir
   if (doneMode) {
     const scheduled = doneMode === 'schedule';
     return (
-      <div className="fixed inset-0 z-50 bg-black/55 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+      <div className="modal-backdrop" onClick={onClose}>
         <div
-          className="bg-surface border border-line rounded-2xl w-full max-w-sm p-6 text-center shadow-main fade-up"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Scheduling complete"
+          className="modal-shell fade-up w-full max-w-sm p-6 text-center"
           onClick={(e) => e.stopPropagation()}
         >
           <CheckCircle2 size={32} className="text-success mx-auto" />
@@ -156,9 +159,12 @@ export function ScheduleModal({ slideshow, accounts, defaults, onClose, onConfir
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/55 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+    <div className="modal-backdrop" onClick={onClose}>
       <div
-        className="bg-surface border border-line rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-main fade-up"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Schedule post"
+        className="modal-shell fade-up max-h-[90vh] w-full max-w-lg overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-line">
@@ -275,7 +281,7 @@ export function ScheduleModal({ slideshow, accounts, defaults, onClose, onConfir
                     checked={watermark}
                     onChange={(e) => setWatermark(e.target.checked)}
                   />
-                  Zara Tech watermark
+                  Add neutral watermark
                 </label>
               </div>
             )}
@@ -290,7 +296,7 @@ export function ScheduleModal({ slideshow, accounts, defaults, onClose, onConfir
               <p className="text-[12px] text-ink-5">
                 No connected accounts. Add your post-bridge key in Settings and connect accounts at{' '}
                 <a
-                  href="https://post-bridge.com?atp=clip-factory"
+                href="https://post-bridge.com"
                   target="_blank"
                   rel="noreferrer"
                   className="text-accent underline decoration-white/20 hover:text-ink"
@@ -356,7 +362,7 @@ export function ScheduleModal({ slideshow, accounts, defaults, onClose, onConfir
           {error && <p className="text-[12px] text-danger">{error}</p>}
         </div>
 
-        <div className="px-5 py-4 border-t border-line bg-[#101010] flex justify-end gap-2">
+        <div className="sticky bottom-0 flex justify-end gap-2 border-t border-line bg-surface/95 px-5 py-4 backdrop-blur">
           <Button variant="secondary" onClick={onClose} disabled={busy}>
             Cancel
           </Button>

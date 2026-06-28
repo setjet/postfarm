@@ -37,6 +37,7 @@ export function GenerateModal({ defaultPacks, initialCount, initialOptions, gene
   const [topicMode, setTopicMode] = useState<'general' | 'custom'>(initialOptions?.topicMode || 'general');
   const [topic, setTopic] = useState(initialOptions?.topic || '');
   const [generationNotes, setGenerationNotes] = useState(initialOptions?.generationNotes || '');
+  const [hashtagNotes, setHashtagNotes] = useState(initialOptions?.hashtagNotes || '');
   const [topicError, setTopicError] = useState<string | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -114,18 +115,19 @@ export function GenerateModal({ defaultPacks, initialCount, initialOptions, gene
       topicMode,
       topic: topicMode === 'custom' ? cleanTopic : undefined,
       generationNotes: generationNotes.trim() || undefined,
+      hashtagNotes: hashtagNotes.trim() || undefined,
     });
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-3 backdrop-blur-sm sm:p-6" onClick={generating ? undefined : onClose}>
+    <div className="modal-backdrop" onClick={generating ? undefined : onClose}>
       <div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="generate-modal-title"
         tabIndex={-1}
-        className="fade-up flex max-h-[calc(100dvh-24px)] w-[1000px] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-lg border border-line bg-surface shadow-main sm:max-h-[85vh] sm:max-w-[calc(100vw-48px)]"
+        className="modal-shell fade-up flex max-h-[calc(100dvh-24px)] w-[1000px] max-w-[calc(100vw-24px)] flex-col sm:max-h-[85vh] sm:max-w-[calc(100vw-48px)]"
         onClick={(event) => event.stopPropagation()}
       >
         <header className="flex shrink-0 items-center justify-between border-b border-line px-4 py-3 sm:px-5">
@@ -198,9 +200,9 @@ export function GenerateModal({ defaultPacks, initialCount, initialOptions, gene
               <legend className={fieldLabel}>Format</legend>
               <div className="grid grid-cols-2 gap-1 rounded-lg bg-raised p-1">
                 <button type="button" aria-pressed={postFormat === 'standard'} onClick={() => setPostFormat('standard')} disabled={generating} className={segmentedButton(postFormat === 'standard')}>Standard carousel</button>
-                <button type="button" aria-pressed={postFormat === 'notes'} onClick={() => setPostFormat('notes')} disabled={generating} className={segmentedButton(postFormat === 'notes')}>Notes-style</button>
+                <button type="button" aria-pressed={postFormat === 'notes'} onClick={() => setPostFormat('notes')} disabled={generating} className={segmentedButton(postFormat === 'notes')}>Text-note carousel</button>
               </div>
-              {postFormat === 'notes' && <p className="mt-1.5 text-[11px] leading-relaxed text-ink-6">Creates a 2-slide lifestyle hook + iPhone Notes carousel.</p>}
+              {postFormat === 'notes' && <p className="mt-1.5 text-[11px] leading-relaxed text-ink-6">Creates an optional 2-slide minimal note-style template.</p>}
             </fieldset>
 
             <fieldset>
@@ -255,6 +257,24 @@ export function GenerateModal({ defaultPacks, initialCount, initialOptions, gene
               <p className="mt-1 text-[11px] leading-relaxed text-ink-6">Optional instructions for what to include, avoid, or emphasise.</p>
             </div>
 
+            <div>
+              <div className="mb-1.5 flex items-center justify-between gap-3">
+                <label htmlFor="hashtag-notes" className="text-[11px] font-semibold text-ink-4">Hashtag notes</label>
+                <span className="text-[10px] tabular-nums text-ink-6">{hashtagNotes.length}/1000</span>
+              </div>
+              <textarea
+                id="hashtag-notes"
+                value={hashtagNotes}
+                onChange={(event) => setHashtagNotes(event.target.value.slice(0, 1000))}
+                maxLength={1000}
+                rows={2}
+                placeholder="e.g. use more AI image hashtags, avoid #fyp"
+                disabled={generating}
+                className="w-full resize-none rounded-lg border border-line bg-raised px-3 py-2 text-[12px] text-ink outline-none placeholder:text-ink-6 focus:border-line-2 disabled:opacity-50"
+              />
+              <p className="mt-1 text-[11px] leading-relaxed text-ink-6">Overrides the project hashtag strategy for this batch only.</p>
+            </div>
+
             <fieldset className="space-y-3">
               <legend className={fieldLabel}>Growth options</legend>
               <div className="grid grid-cols-2 gap-2">
@@ -305,7 +325,7 @@ export function GenerateModal({ defaultPacks, initialCount, initialOptions, gene
           </div>
         </div>
 
-        <footer className="shrink-0 border-t border-line bg-[#181818] px-4 py-3 sm:px-5">
+        <footer className="shrink-0 border-t border-line bg-surface/95 px-4 py-3.5 backdrop-blur sm:px-6">
           {error && !generating && <p role="alert" className="mb-2 text-[12px] leading-snug text-danger">{error}</p>}
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={onClose} disabled={generating}>Cancel</Button>

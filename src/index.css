@@ -12,6 +12,30 @@
   .textarea {
     @apply mt-1.5 w-full resize-y rounded-lg border border-line bg-control px-3 py-2 text-[12px] normal-case tracking-normal text-ink outline-none focus:border-accent;
   }
+
+  .page-content {
+    @apply mx-auto w-full max-w-6xl px-4 py-6 sm:px-8 sm:py-8;
+  }
+
+  .surface-panel {
+    @apply rounded-xl border border-line bg-surface shadow-main;
+  }
+
+  .empty-state {
+    @apply mx-auto max-w-md px-5 py-16 text-center;
+  }
+
+  .loading-state {
+    @apply flex min-h-40 items-center justify-center gap-2 text-[12px] text-ink-5;
+  }
+
+  .modal-backdrop {
+    @apply fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 backdrop-blur-sm sm:p-5;
+  }
+
+  .modal-shell {
+    @apply overflow-hidden rounded-2xl border border-line bg-surface shadow-main;
+  }
 }
 
 :root {
@@ -57,20 +81,18 @@ button {
   cursor: pointer;
 }
 
-button:focus {
-  outline: none;
-}
+button:focus { outline: none; }
 
-html {
-  height: 100%;
-  height: 100dvh;
-}
-
+html,
 body,
 #root {
   height: 100%;
   height: 100dvh;
   max-height: 100dvh;
+}
+
+body,
+#root {
   overflow: hidden;
   margin: 0;
   padding: 0;
@@ -105,9 +127,7 @@ textarea {
   box-shadow: var(--shadow-field);
 }
 
-input[type='checkbox'] {
-  accent-color: var(--accent);
-}
+input[type='checkbox'] { accent-color: var(--accent); }
 
 button:focus-visible,
 a:focus-visible,
@@ -123,48 +143,27 @@ select option {
   color: var(--ink);
 }
 
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: rgb(255 255 255 / 0.18);
-  border-radius: 99px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: rgb(255 255 255 / 0.28);
-}
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgb(255 255 255 / 0.18); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: rgb(255 255 255 / 0.28); }
 
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
 @keyframes shimmer {
-  0%   { background-position: -200% center; }
+  0% { background-position: -200% center; }
   100% { background-position: 200% center; }
 }
 
 @keyframes fadeUp {
-  0% {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  0% { opacity: 0; transform: translateY(8px); }
+  100% { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes textBlink {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.4;
-  }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
 
 .skeleton {
@@ -179,17 +178,9 @@ select option {
   box-shadow: var(--shadow-main);
 }
 
-.app-main {
-  background-color: var(--bg);
-}
-
-.fade-up {
-  animation: fadeUp 220ms ease both;
-}
-
-.text-blink {
-  animation: textBlink 2s ease-in-out infinite;
-}
+.app-main { background-color: var(--bg); }
+.fade-up { animation: fadeUp 220ms ease both; }
+.text-blink { animation: textBlink 2s ease-in-out infinite; }
 
 .text-gradient {
   background: linear-gradient(90deg, #f3f3f3, #7dd3fc, #c084fc, #f3f3f3);
@@ -201,17 +192,12 @@ select option {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
+  *, *::before, *::after {
     animation-duration: 1ms !important;
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
     transition-duration: 1ms !important;
   }
 
-  .text-blink {
-    animation: none !important;
-    opacity: 1;
-  }
+  .text-blink { animation: none !important; opacity: 1; }
 }

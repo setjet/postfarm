@@ -35,6 +35,7 @@ export interface Slideshow {
   topicMode?: 'general' | 'custom';
   topic?: string;
   generationNotes?: string;
+  hashtagNotes?: string;
   productEmphasis?: string;
   plannerFormat?: PlannerFormat;
   plannerSlotId?: string;
@@ -166,6 +167,20 @@ export interface BrainState {
   styleMemory: string;
 }
 
+export interface HashtagStrategy {
+  preferred?: string[];
+  required?: string[];
+  banned?: string[];
+  brand?: string[];
+  niche?: string[];
+  tools?: string[];
+  style?: 'balanced' | 'broad' | 'niche' | 'tool' | 'product' | 'minimal';
+  count?: 3 | 5 | 8 | 10;
+  trendInfluence?: 'off' | 'light' | 'balanced' | 'strong';
+  avoidGeneric?: boolean;
+  notes?: string;
+}
+
 export interface ProjectDefaults {
   socialAccountIds: number[];
   mode: 'draft' | 'schedule';
@@ -176,6 +191,7 @@ export interface Project {
   name: string;
   brain: BrainState;
   defaults: ProjectDefaults;
+  hashtagStrategy?: HashtagStrategy;
   // Bundled pack names and stable Library folder ids ([] = gradients only).
   imagePacks: string[];
 }

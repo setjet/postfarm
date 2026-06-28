@@ -1,10 +1,9 @@
-import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { getDataDir } from './paths.js'
 
-const DEFAULT_DIR = process.env.VERCEL ? join(tmpdir(), '.slidesmith') : join(homedir(), '.slidesmith')
-const DIR = process.env.SLIDESMITH_DIR || DEFAULT_DIR
+const DIR = getDataDir()
 const INDEX_PATH = join(DIR, 'folders.json')
 
 export const ALL_FOLDER_ID = 'all'
@@ -14,10 +13,10 @@ export const VIDEOS_FOLDER_ID = 'folder:videos'
 
 const DEFAULT_FOLDERS = [
   { id: UNCATEGORIZED_FOLDER_ID, name: 'Uncategorized', type: 'mixed' },
-  { id: 'folder:lifestyle-hooks', name: 'Lifestyle hooks', type: 'image' },
-  { id: 'folder:ai-tech', name: 'AI / tech', type: 'mixed' },
-  { id: 'folder:product-mockups', name: 'Product mockups', type: 'image' },
-  { id: 'folder:notes-backgrounds', name: 'Notes backgrounds', type: 'image' },
+  { id: 'folder:brand-assets', name: 'Brand assets', type: 'mixed' },
+  { id: 'folder:campaign-creative', name: 'Campaign creative', type: 'image' },
+  { id: 'folder:product-offers', name: 'Product or offer assets', type: 'image' },
+  { id: 'folder:text-note-backgrounds', name: 'Text-note backgrounds', type: 'image' },
   { id: VIDEOS_FOLDER_ID, name: 'Videos', type: 'video' },
   { id: BUNDLED_FOLDER_ID, name: 'Bundled packs', type: 'image', readonly: true },
 ]
