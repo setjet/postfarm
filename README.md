@@ -1,8 +1,21 @@
+<div align="center">
+
 # Postfarm
 
-Postfarm is a local-first content automation workspace for generating, organizing, previewing, and scheduling social posts.
+**A local-first content automation workspace for generating, organizing, previewing, and scheduling social posts.**
 
-It is designed for creators, small teams, and brands who want a self-run workflow: your projects, media, drafts, plans, and settings live on your own machine, and external services are used only when you configure them.
+[![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-f5c2e7?style=for-the-badge)](https://github.com/athcagithub/SlideSmith/blob/main/LICENSE)
+[![Node.js](https://img.shields.io/badge/node-%5E20.19.0%20%7C%7C%20%3E%3D22.12.0-8bd5ca?style=for-the-badge&logo=node.js&logoColor=white)](#requirements)
+[![React](https://img.shields.io/badge/react-19-89b4fa?style=for-the-badge&logo=react&logoColor=white)](https://react.dev/)
+[![Vite](https://img.shields.io/badge/vite-8-cba6f7?style=for-the-badge&logo=vite&logoColor=white)](https://vite.dev/)
+[![Local First](https://img.shields.io/badge/local--first-no%20hosted%20database-a6e3a1?style=for-the-badge)](#local-first-privacy)
+[![No Telemetry](https://img.shields.io/badge/telemetry-none-fab387?style=for-the-badge)](#local-first-privacy)
+
+[Features](#features) • [Quick Start](#quick-start) • [Privacy](#local-first-privacy) • [Credits](#credits) • [License](#license)
+
+</div>
+
+---
 
 ## Attribution
 
@@ -10,100 +23,101 @@ Postfarm is an upgraded and expanded version inspired by the original [SlideSmit
 
 This public Postfarm version is maintained by [Jet](https://github.com/setjet).
 
-## What Postfarm Does
+## Overview
 
-Postfarm brings the main parts of a social content workflow into one local app:
+Postfarm brings content planning, AI-assisted generation, media organization, queue review, scheduling, and learning insights into one self-run workspace.
 
-| Area | What it does |
+It is built for creators, teams, and brands who want useful automation without handing their whole content system to a hosted database. Your workspace starts empty, your API keys are yours, and your local files stay on your machine unless you intentionally use a connected service.
+
+> Postfarm is bring-your-own-keys, local-first, and designed to feel like a calm production desk instead of a SaaS dashboard you do not control.
+
+## What You Can Do
+
+| Workflow | What Postfarm helps with |
 | --- | --- |
-| Generate | Create post ideas, captions, carousels, and optional text-note style posts with AI. |
-| Organize | Keep drafts in a queue, group media into folders, and manage project-specific settings. |
-| Preview | Review generated slides, captions, hashtags, quality warnings, and scheduling details before publishing. |
-| Plan | Use the autopilot planner to draft content calendars from topics, formats, and posting windows. |
-| Schedule | Send approved posts to Postbridge when you configure your own Postbridge API key. |
-| Learn | Pull connected results and learning insights from your own linked accounts when configured. |
+| Generate | Draft post ideas, captions, carousels, image posts, video posts, and optional text-note style templates. |
+| Organize | Keep work in a queue, separate projects by brand, and manage media in local folders. |
+| Preview | Inspect slides, captions, hashtags, quality warnings, platform fit, and scheduling context before posting. |
+| Plan | Build content calendars with the autopilot planner, custom topics, posting windows, and approval rules. |
+| Schedule | Create drafts or scheduled posts through Postbridge when you connect your own key. |
+| Learn | Pull connected analytics into local learning memory when Postbridge is configured. |
 
 ## Features
 
-- AI-assisted post and carousel generation.
-- Project and brand memory for niche, audience, style, and positioning.
-- Topics, generation notes, and reusable hashtag strategy.
-- Local media library with folders for images and videos.
-- Queue, preview, edit, and quality-check workflow.
-- Optional autopilot content planner.
-- Schedule and draft management through Postbridge.
-- Results and learning insights from connected analytics.
-- Multi-provider AI support through OpenRouter and DeepSeek.
-- Optional Apify research and scraping workflows.
-- Local-first storage with API-key based integrations.
+| Category | Highlights |
+| --- | --- |
+| AI generation | OpenRouter and DeepSeek support, project memory, topic notes, rewrites, scoring, and style guidance. |
+| Brand workspace | Multi-project setup with niche, audience, app or brand context, style memory, and hashtag strategy. |
+| Content operations | Queue, preview modal, quality checks, planner slots, scheduling conflicts, and approval states. |
+| Media library | Local image and video library, folders, imports, optional Apify scraping, and safe generated media handling. |
+| Publishing | Postbridge account loading, media uploads, drafts, scheduling, and analytics sync when configured. |
+| Privacy | Local data directory, empty first-run keys, ignored local stores, no telemetry, and no hosted Postfarm database. |
 
 ## Local-First Privacy
 
-Postfarm stores user data on the device running the app. Projects, API keys, generated posts, plans, imported media, folders, trend cache, learning memory, and local settings are stored as local files outside the repository by default.
+Postfarm stores runtime data outside this repository by default:
 
-Postfarm does not include telemetry, product analytics, remote database sync, automatic cloud uploads, or a hosted backend.
+- Projects and project memory.
+- API keys and provider settings.
+- Generated queue drafts and content plans.
+- Imported images, imported videos, folders, and local media indexes.
+- Trend cache, analytics cache, and learning memory.
 
-Data only leaves your device when you take an action that requires a configured external service:
+Postfarm does **not** include telemetry, product analytics, automatic cloud sync, a remote database, or background uploads.
 
-- AI generation, scoring, rewrites, and learning prompts use your selected AI provider.
-- Apify is used only when you run scraping or research workflows.
-- Postbridge is used only when you load connected accounts, upload media, schedule posts, create drafts, or sync analytics.
+Data only leaves your device when you use a feature that requires one of your configured external services:
 
-Your API keys belong to you. Keep them private and never commit them to Git.
+| Service | Used for |
+| --- | --- |
+| OpenRouter | AI generation, scoring, rewrites, trends, and learning prompts. |
+| DeepSeek | Alternate AI generation provider. |
+| Apify | Optional research, image scraping, and video scraping workflows. |
+| Postbridge | Connected accounts, uploads, drafts, scheduling, and analytics sync. |
 
-## Requirements
-
-- Node.js compatible with the Vite toolchain in this repo. The installed Vite version requires `^20.19.0 || >=22.12.0`.
-- npm.
-- Optional: FFmpeg and FFprobe for video rendering workflows.
-- Optional API keys for OpenRouter, DeepSeek, Apify, and Postbridge, depending on which features you want to use.
-
-## Installation
+## Quick Start
 
 ```bash
-git clone <your-postfarm-repo-url>
+git clone https://github.com/setjet/postfarm.git
 cd postfarm
 npm install
 cp .env.example .env
 npm run dev
 ```
 
-Open the local URL printed by Vite, usually:
+Open the local Vite URL printed in your terminal, usually:
 
 ```text
 http://localhost:5173
 ```
 
-The development command starts both the web app and the local API.
+The local API runs on:
 
-## Running Locally
-
-```bash
-npm run dev      # Vite web app + local API
-npm run server   # local API only
-npm run build    # TypeScript build + Vite production build
-npm run preview  # preview the built web app
-npm run lint     # ESLint
-npm test         # Node test suite
+```text
+http://localhost:8787
 ```
 
-For a production-style local run:
+## Requirements
 
-```bash
-npm run build
-npm start
-```
+- Node.js compatible with the Vite toolchain in this repo: `^20.19.0 || >=22.12.0`.
+- npm.
+- Optional: FFmpeg and FFprobe for video rendering workflows.
+- Optional API keys for OpenRouter, DeepSeek, Apify, and Postbridge.
 
-By default:
+## Commands
 
-- Web UI: `http://localhost:5173`
-- Local API: `http://localhost:8787`
+| Command | Purpose |
+| --- | --- |
+| `npm run dev` | Start the Vite web app and local API together. |
+| `npm run server` | Start the local API only. |
+| `npm run build` | Run TypeScript build and Vite production build. |
+| `npm run preview` | Preview the built web app. |
+| `npm run lint` | Run ESLint. |
+| `npm test` | Run the Node test suite. |
+| `npm start` | Serve the built app and API from one Node process. |
 
-## Environment Variables And API Keys
+## Environment Variables
 
-The easiest setup is through the in-app Settings page. New users start with empty API key fields.
-
-You can also use local environment variables. Use placeholders only in shared examples:
+You can configure keys in the Settings page or through local environment variables. Use placeholders only in shared examples:
 
 ```bash
 OPENROUTER_API_KEY=your_openrouter_key_here
@@ -112,7 +126,7 @@ APIFY_API_KEY=your_apify_key_here
 POSTBRIDGE_API_KEY=your_postbridge_key_here
 ```
 
-Additional local options:
+Optional local overrides:
 
 ```bash
 POSTFARM_DIR=/path/to/postfarm-data
@@ -121,16 +135,9 @@ FFMPEG_PATH=/path/to/ffmpeg
 FFPROBE_PATH=/path/to/ffprobe
 ```
 
-Supported services:
-
-- OpenRouter: AI generation, scoring, rewrites, trends, and learning.
-- DeepSeek: alternate AI provider for generation workflows.
-- Apify: optional trend, image, and video research or scraping.
-- Postbridge: connected accounts, drafts, scheduling, uploads, and analytics.
-
 ## Data Storage
 
-Runtime data is stored outside the Git repository by default:
+Postfarm creates its local workspace outside the Git checkout:
 
 | OS | Default location |
 | --- | --- |
@@ -138,24 +145,38 @@ Runtime data is stored outside the Git repository by default:
 | Windows | `%APPDATA%/Postfarm` |
 | Linux | `~/.config/postfarm` |
 
-The app creates missing local files and folders on first run. To reset local data, stop the app and remove the local Postfarm data directory for your operating system. This clears local projects, API keys, queue drafts, content plans, imported media, trend cache, folders, and learning memory. It does not delete anything from external services such as Postbridge.
+To reset local data, stop the app and remove the Postfarm data directory for your operating system. This clears local projects, API keys, queue drafts, plans, media, caches, and learning memory. It does not delete anything from external services such as Postbridge.
 
 ## Git Safety
 
-Do not commit private local data, including:
+The repository is configured to ignore private local runtime files. Do not commit:
 
 - `.env` files.
-- Local stores such as `config.json`, `queue.json`, `plans.json`, `trends.json`, `results.json`, `learning.json`, `library.json`, `folders.json`, or `videos.json`.
+- Local JSON stores such as `config.json`, `queue.json`, `plans.json`, `trends.json`, `results.json`, `learning.json`, `library.json`, `folders.json`, or `videos.json`.
 - SQLite or database files.
 - Imported, scraped, downloaded, or generated media.
 - Exports, thumbnails, caches, logs, screenshots, analytics snapshots, or scheduled-content data.
 
-The repository `.gitignore` is configured to protect these paths by default. If you add sample data, keep it fake, minimal, and clearly marked.
+If you add demo content, keep it fake, minimal, and clearly marked.
+
+## Project Shape
+
+```mermaid
+flowchart LR
+  A["Project Brain"] --> B["AI Generation"]
+  B --> C["Queue + Preview"]
+  C --> D["Quality Checks"]
+  D --> E["Postbridge Drafts or Schedule"]
+  C --> F["Local Media Library"]
+  E --> G["Results + Learning"]
+```
 
 ## Credits
 
-- Original project: [SlideSmith](https://github.com/athcagithub/SlideSmith) by [athcagithub](https://github.com/athcagithub).
-- Upgraded version: Postfarm by [Jet](https://github.com/setjet).
+| Project | Credit |
+| --- | --- |
+| Original foundation | [SlideSmith](https://github.com/athcagithub/SlideSmith) by [athcagithub](https://github.com/athcagithub) |
+| Upgraded version | Postfarm by [Jet](https://github.com/setjet) |
 
 Thank you to the original SlideSmith author for the foundation this project builds on.
 
@@ -168,8 +189,6 @@ The original SlideSmith repository uses the [PolyForm Noncommercial License 1.0.
 Required notice from the original project: Copyright 2026 Slidesmith.
 
 ## Contributing
-
-Contributions are welcome once the project owner finalizes the public release process.
 
 1. Fork the repo.
 2. Create a focused branch.
