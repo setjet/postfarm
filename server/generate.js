@@ -72,6 +72,24 @@ Apply these preferences to every post in this batch, including hooks, slide copy
 - Treat this block as instructions, not post copy. Never quote, expose, or reproduce the instructions in a post unless the user explicitly asks for that content.`
 }
 
+export function cleanPostStyle(value) {
+  return cleanGenerationNotes(value)
+}
+
+export function postStyleGuidance(value) {
+  const style = cleanPostStyle(value)
+  if (!style) return ''
+  return `User post style preference:
+${style}
+
+Style handling rules:
+- Follow this format, tone, layout, and style where possible across hooks, slide copy, captions, hashtags, and visual direction.
+- If examples are included, use them as style references only; do not copy them word-for-word or treat them as post copy.
+- Do not mention this style preference in slides or captions unless the user explicitly asks.
+- Respect requested slide count or layout when compatible with the selected post format and platform limits.
+- Required JSON schema, platform rules, safety constraints, and quality rules win over conflicting style preferences.`
+}
+
 const HASHTAG_STYLE_GUIDANCE = {
   balanced: 'Use a deliberate mix of broad, niche, tool/product, and brand tags.',
   broad: 'Lean slightly toward relevant discovery and broad-reach tags without using unrelated viral filler.',
@@ -83,11 +101,12 @@ const HASHTAG_STYLE_GUIDANCE = {
 
 export function hashtagGuidance(brain, options = {}) {
   const strategy = strategyWithHashtagNotes(options.hashtagStrategy, options.hashtagNotes, brain)
+  const styleContext = cleanPostStyle(options.postStyle)
   const allowed = (tags) => tags.filter((tag) => !strategy.banned.includes(tag) && (!strategy.avoidGeneric || !GENERIC_HASHTAGS.has(tag)))
   const trendLimit = { off: 0, light: 4, balanced: 8, strong: 14 }[strategy.trendInfluence]
   const signals = trendHashtagSignals(options.hashtagTrends ?? options.trends ?? [], {
     brain,
-    topic: [options.topic, options.contentBucket, options.ctaKeyword].filter(Boolean).join(' '),
+    topic: [options.topic, options.contentBucket, options.ctaKeyword, styleContext].filter(Boolean).join(' '),
   }).filter((signal) => !strategy.banned.includes(signal.tag) && (!strategy.avoidGeneric || !GENERIC_HASHTAGS.has(signal.tag))).slice(0, trendLimit)
   const signalBlock = strategy.trendInfluence === 'off'
     ? 'Trend influence is OFF. Do not use trend hashtags or trend hashtag patterns.'
@@ -112,6 +131,7 @@ ${JSON.stringify(signals, null, 2)}`
 - Style: ${strategy.style}. ${HASHTAG_STYLE_GUIDANCE[strategy.style]}
 - ${strategy.avoidGeneric ? 'Never use generic tags such as fyp, viral, or explorepage.' : 'Generic discovery tags are allowed only when directly relevant; never use them as filler.'}
 - Keep every tag relevant to the specific post topic. Custom-topic posts must use topic-specific tags.
+- Post style context (use only when it changes hashtag relevance): ${styleContext || '(none)'}.
 - Extra project instructions: ${strategy.notes || '(none)'}.
 - Current-batch hashtag override: ${override || '(none)'}.
 ${signalBlock}`
@@ -130,6 +150,10 @@ Stay inside this topic. Do not drift into unrelated AI content. Hooks, slides, c
   }
   return `Topic focus:
 General mode. Generate the best-performing content based on the project Brain, style memory, trend data, learning memory, and content buckets.`
+}
+
+function joinInstructionBlocks(...blocks) {
+  return blocks.filter(Boolean).join('\n\n')
 }
 
 function learningForPrompt(memory) {
@@ -161,9 +185,11 @@ ${JSON.stringify(trends, null, 2)}`
   const hashtagBlock = hashtagGuidance(brain, options)
   const topicBlock = topicGuidance(options)
   const notesBlock = generationNotesGuidance(options.generationNotes)
-  const topicAndNotes = notesBlock ? `${topicBlock}\n\n${notesBlock}` : topicBlock
-  const captionShape = notesBlock
-    ? 'the post caption with 1-2 emoji unless the user preferences above request otherwise'
+  const styleBlock = postStyleGuidance(options.postStyle)
+  const topicAndInstructions = joinInstructionBlocks(topicBlock, notesBlock, styleBlock)
+  const hasUserInstructions = Boolean(notesBlock || styleBlock)
+  const captionShape = hasUserInstructions
+    ? 'the post caption with 1-2 emoji unless the user preferences or post style above request otherwise'
     : 'the post caption with 1-2 emoji'
 
   return `You write short-form social media carousel slideshows (TikTok/Instagram).
@@ -183,7 +209,7 @@ ${learningBlock}
 ${bucket}
 ${cta}
 
-${topicAndNotes}
+${topicAndInstructions}
 
 ${hashtagBlock}
 
@@ -215,7 +241,8 @@ ${JSON.stringify(trends, null, 2)}`
   const hashtagBlock = hashtagGuidance(brain, options)
   const topicBlock = topicGuidance(options)
   const notesBlock = generationNotesGuidance(options.generationNotes)
-  const topicAndNotes = notesBlock ? `${topicBlock}\n\n${notesBlock}` : topicBlock
+  const styleBlock = postStyleGuidance(options.postStyle)
+  const topicAndInstructions = joinInstructionBlocks(topicBlock, notesBlock, styleBlock)
 
   return `You create original TikTok/Instagram minimal text-note carousel posts.
 
@@ -234,7 +261,7 @@ ${learningBlock}
 ${bucket}
 ${cta}
 
-${topicAndNotes}
+${topicAndInstructions}
 
 ${hashtagBlock}
 
@@ -326,6 +353,7 @@ function normalizeRawSlideshow(raw, i, stamp, brain, options = {}) {
     topicMode: options.topicMode || undefined,
     topic: options.topic || undefined,
     generationNotes: cleanGenerationNotes(options.generationNotes) || undefined,
+    postStyle: cleanPostStyle(options.postStyle) || undefined,
     hashtagNotes: String(options.hashtagNotes || '').trim().slice(0, 1000) || undefined,
     trendSourcesUsed: options.trendSourcesUsed || undefined,
     slides: slides.map((text, j) => ({
@@ -393,6 +421,7 @@ function slideshowForPrompt(slideshow) {
     rationale: slideshow.rationale,
     topicMode: slideshow.topicMode,
     topic: slideshow.topic,
+    postStyle: slideshow.postStyle,
   }
 }
 
@@ -405,7 +434,7 @@ function statusFor(score, threshold) {
 }
 
 function scoreKeysFor(slideshow) {
-  return slideshow?.generationNotes ? [...SCORE_KEYS, 'instructionAdherence'] : SCORE_KEYS
+  return slideshow?.generationNotes || slideshow?.postStyle ? [...SCORE_KEYS, 'instructionAdherence'] : SCORE_KEYS
 }
 
 function parseScore(parsed, threshold, scoreKeys = SCORE_KEYS) {
@@ -433,12 +462,14 @@ function fallbackScore(error, threshold, scoreKeys = SCORE_KEYS) {
 
 export function buildScorePrompt({ brain, slideshow, hashtagStrategy, hashtagTrends = [] }) {
   const notesBlock = generationNotesGuidance(slideshow.generationNotes)
-  const adherenceCriterion = notesBlock
+  const styleBlock = postStyleGuidance(slideshow.postStyle)
+  const instructionBlock = joinInstructionBlocks(notesBlock, styleBlock)
+  const adherenceCriterion = instructionBlock
     ? '\n- instructionAdherence (strongly penalize any ignored requirement or explicit exclusion)'
     : ''
-  const adherenceShape = notesBlock ? ',\n    "instructionAdherence": 0' : ''
-  const instructionContext = notesBlock
-    ? `\n${notesBlock}\n\nCheck the complete post for prohibited words, topics, emojis, styles, elements, missing requested content, and other instruction violations. Preserve deliberate spelling and brand names. Put exact violations and concrete repair instructions in qualityFeedback.\n`
+  const adherenceShape = instructionBlock ? ',\n    "instructionAdherence": 0' : ''
+  const instructionContext = instructionBlock
+    ? `\n${instructionBlock}\n\nCheck the complete post for prohibited words, topics, emojis, styles, elements, missing requested content, and other instruction violations. Preserve deliberate spelling and brand names. Put exact violations and concrete repair instructions in qualityFeedback.\n`
     : ''
   const hashtagBlock = hashtagGuidance(brain, {
     hashtagStrategy,
@@ -446,6 +477,7 @@ export function buildScorePrompt({ brain, slideshow, hashtagStrategy, hashtagTre
     hashtagNotes: slideshow.hashtagNotes,
     topic: slideshow.topic,
     topicMode: slideshow.topicMode,
+    postStyle: slideshow.postStyle,
   })
   return `Score this short-form carousel for ${brain.appName || 'this brand'}.
 
@@ -507,10 +539,13 @@ export function buildRewritePrompt({ brain, slideshow, feedback, note, trends = 
     hashtagNotes: slideshow.hashtagNotes,
     topic: slideshow.topic,
     topicMode: slideshow.topicMode,
+    postStyle: slideshow.postStyle,
   })
   const topicBlock = topicGuidance({ topic: slideshow.topic, topicMode: slideshow.topicMode })
   const notesBlock = generationNotesGuidance(slideshow.generationNotes)
-  const topicAndNotes = notesBlock ? `${topicBlock}\n\n${notesBlock}` : topicBlock
+  const styleBlock = postStyleGuidance(slideshow.postStyle)
+  const topicAndInstructions = joinInstructionBlocks(topicBlock, notesBlock, styleBlock)
+  const hasUserInstructions = Boolean(notesBlock || styleBlock)
   if (slideshow.format === 'notes') {
     const prompt = `Rewrite this text-note carousel while keeping it exactly 2 slides:
 1. lifestyle/photo curiosity hook
@@ -524,7 +559,7 @@ Account:
 Rewrite guidance:
 ${note || feedback || 'Make it more specific, more casual, and less generic.'}
 
-${topicAndNotes}
+${topicAndInstructions}
 
 Trend research to study, not copy:
 ${JSON.stringify(compactTrends(trends || []).slice(0, 12), null, 2)}
@@ -567,7 +602,7 @@ Account:
 Rewrite guidance:
 ${note || feedback || 'Make it sharper, more specific, and less generic.'}
 
-${topicAndNotes}
+${topicAndInstructions}
 
 Trend research to study, not copy:
 ${JSON.stringify(compactTrends(trends || []).slice(0, 12), null, 2)}
@@ -584,7 +619,7 @@ Return ONLY JSON:
   "slideshow": {
     "hook": "max ~8 words",
     "slides": ["5-6 short slide lines, last is a CTA"],
-    "caption": "${notesBlock ? 'caption with 1-2 emoji unless the user preferences above request otherwise' : 'caption with 1-2 emoji'}",
+    "caption": "${hasUserInstructions ? 'caption with 1-2 emoji unless the user preferences or post style above request otherwise' : 'caption with 1-2 emoji'}",
     "hashtags": ["aiprompts", "aiimages", "promptengineering", "aicreators"],
     "rationale": "why the rewrite is stronger"
   }
@@ -684,6 +719,7 @@ export async function generateSlideshows({ provider = 'openrouter', apiKey, mode
     topicMode: options.topicMode,
     topic: options.topic,
     generationNotes: cleanGenerationNotes(options.generationNotes) || undefined,
+    postStyle: cleanPostStyle(options.postStyle) || undefined,
     hashtagNotes: String(options.hashtagNotes || '').trim().slice(0, 1000) || undefined,
     hashtagStrategy: options.hashtagStrategy,
     trendSourcesUsed: options.trends?.length ? options.trends.map((t) => t.id).slice(0, 40) : undefined,

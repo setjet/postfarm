@@ -27,6 +27,7 @@ import {
   getVideos,
   importImages,
   importVideo as importVideoAsset,
+  importVideos,
   moveLibraryAsset,
   scrapePinterest,
   scrapeVideos as scrapeVideoAssets,
@@ -42,6 +43,9 @@ type MediaFilter = 'all' | 'images' | 'videos';
 const ALL_FOLDER_ID = 'all';
 const UNCATEGORIZED_FOLDER_ID = 'folder:uncategorized';
 const BUNDLED_FOLDER_ID = 'folder:bundled';
+const VIDEO_ACCEPT = 'video/mp4,video/quicktime,video/webm,video/x-m4v,.mp4,.mov,.m4v,.webm';
+const VIDEO_EXT_RE = /\.(mp4|mov|m4v|webm)$/i;
+const MAX_DEVICE_VIDEO_BYTES = 300 * 1024 * 1024;
 
 function formatDuration(seconds: number | null) {
   if (!seconds) return null;
@@ -57,7 +61,7 @@ function folderName(folders: LibraryFolder[], id: string) {
 
 function assetText(image?: LibraryImage, video?: VideoAsset) {
   if (image) return [image.pack, image.source, image.originalName].filter(Boolean).join(' ');
-  if (video) return [video.pack, video.source, video.originalUrl].filter(Boolean).join(' ');
+  if (video) return [video.pack, video.source, video.originalName, video.originalUrl].filter(Boolean).join(' ');
   return '';
 }
 
@@ -83,10 +87,12 @@ export function LibraryView({ hasApify }: LibraryViewProps) {
   const [videoSource, setVideoSource] = useState('');
   const [videoCount, setVideoCount] = useState(5);
   const [videoFolderId, setVideoFolderId] = useState('folder:videos');
-  const [videoBusy, setVideoBusy] = useState<'import' | 'scrape' | null>(null);
+  const [videoImportFolderId, setVideoImportFolderId] = useState(UNCATEGORIZED_FOLDER_ID);
+  const [videoBusy, setVideoBusy] = useState<'import' | 'scrape' | 'file' | null>(null);
   const [videoError, setVideoError] = useState<string | null>(null);
   const [videoNote, setVideoNote] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const videoFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadImages = useCallback(() => getLibrary().then(setImages).catch((e) => setError(e.message)), []);
   const loadVideos = useCallback(() => getVideos().then(setVideos).catch((e) => setVideoError(e.message)), []);
@@ -187,6 +193,39 @@ export function LibraryView({ hasApify }: LibraryViewProps) {
       setVideoError(e instanceof Error ? e.message : String(e));
     } finally {
       setVideoBusy(null);
+    }
+  };
+
+  const importSelectedVideos = async (files: FileList | null) => {
+    const selected = Array.from(files || []);
+    if (!selected.length) return;
+    const valid: File[] = [];
+    const skipped: string[] = [];
+    for (const file of selected) {
+      const supportedType = !file.type || file.type.startsWith('video/') || file.type === 'application/octet-stream';
+      if (!supportedType || !VIDEO_EXT_RE.test(file.name)) skipped.push(file.name);
+      else if (file.size > MAX_DEVICE_VIDEO_BYTES) skipped.push(`${file.name} is over 300 MB`);
+      else valid.push(file);
+    }
+    if (!valid.length) {
+      setVideoError('Choose MP4, MOV, WebM, or M4V files under 300 MB.');
+      if (videoFileInputRef.current) videoFileInputRef.current.value = '';
+      return;
+    }
+    setVideoError(null);
+    setVideoNote(null);
+    setVideoBusy('file');
+    try {
+      const r = await importVideos(valid, videoImportFolderId);
+      const failed = [...skipped, ...(r.failed || []).map((item) => `${item.name}: ${item.error}`)];
+      setVideoNote(`Added ${r.added} video${r.added === 1 ? '' : 's'}${failed.length ? ` (${failed.length} skipped)` : ''}.`);
+      await reloadAll();
+      window.dispatchEvent(new Event('postfarm:library-changed'));
+    } catch (e) {
+      setVideoError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setVideoBusy(null);
+      if (videoFileInputRef.current) videoFileInputRef.current.value = '';
     }
   };
 
@@ -393,6 +432,34 @@ export function LibraryView({ hasApify }: LibraryViewProps) {
                   value={videoFolderId}
                   onChange={(e) => setVideoFolderId(e.target.value)}
                   className="h-9 max-w-[190px] bg-raised border border-line rounded-lg px-2 text-[12px] text-ink outline-none"
+                >
+                  {targetFolderOptions.map((folder) => (
+                    <option key={folder.id} value={folder.id}>{folder.name}</option>
+                  ))}
+                </select>
+              </div>
+              <input
+                ref={videoFileInputRef}
+                type="file"
+                accept={VIDEO_ACCEPT}
+                multiple
+                className="hidden"
+                onChange={(e) => void importSelectedVideos(e.target.files)}
+              />
+              <div className="flex items-start gap-2 flex-wrap">
+                <Button
+                  variant="primary"
+                  icon={videoBusy === 'file' ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+                  onClick={() => videoFileInputRef.current?.click()}
+                  disabled={videoBusy !== null}
+                >
+                  {videoBusy === 'file' ? 'Importing...' : 'Import videos'}
+                </Button>
+                <select
+                  value={videoImportFolderId}
+                  onChange={(e) => setVideoImportFolderId(e.target.value)}
+                  disabled={videoBusy === 'file'}
+                  className="h-9 max-w-[190px] bg-raised border border-line rounded-lg px-2 text-[12px] text-ink outline-none disabled:opacity-50"
                 >
                   {targetFolderOptions.map((folder) => (
                     <option key={folder.id} value={folder.id}>{folder.name}</option>

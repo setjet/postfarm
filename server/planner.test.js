@@ -8,6 +8,7 @@ const base = {
   preferredTimes: ['09:00', '17:00'], socialAccountIds: [1], topicMode: 'custom',
   topics: ['Alpha', 'Beta', 'Gamma'], contentPillars: [{ name: 'Teach', percentage: 70 }, { name: 'Proof', percentage: 30 }],
   formats: ['standard', 'notes', 'video'], backgroundSelections: ['folder-a', 'folder-b'],
+  postStyle: '2-slide lowercase explainer',
 }
 
 test('plan creation stores stable ids and distributes multiple daily slots', () => {
@@ -18,6 +19,8 @@ test('plan creation stores stable ids and distributes multiple daily slots', () 
   assert.deepEqual(plan.slots.slice(0, 3).map((slot) => slot.topic), ['Alpha', 'Beta', 'Gamma'])
   assert.notEqual(plan.slots[0].format, plan.slots[1].format)
   assert.notEqual(plan.slots[0].backgroundSelection, plan.slots[1].backgroundSelection)
+  assert.equal(plan.config.postStyle, '2-slide lowercase explainer')
+  assert.equal(plan.slots[0].postStyleOverride, null)
 })
 
 test('AI timing mode creates valid, distinct engagement windows for every daily post', () => {

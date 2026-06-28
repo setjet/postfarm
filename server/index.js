@@ -43,7 +43,7 @@ import {
   uploadMedia,
   createPost,
 } from './postbridge.js'
-import { cleanGenerationNotes, generateSlideshows, improveSlideshow } from './generate.js'
+import { cleanGenerationNotes, cleanPostStyle, generateSlideshows, improveSlideshow } from './generate.js'
 import { listModels } from './openrouter.js'
 import { listDeepSeekModels, providerKey, providerModel, validateProviderKey } from './ai.js'
 import {
@@ -63,6 +63,7 @@ import {
 import {
   listVideos,
   importVideoUrl,
+  importVideoFiles,
   scrapeVideos,
   removeVideo,
   getVideoFile,
@@ -216,6 +217,7 @@ app.post('/api/generate', h(async (req, res) => {
       topicMode: req.body?.topicMode === 'custom' ? 'custom' : 'general',
       topic: req.body?.topicMode === 'custom' ? String(req.body?.topic || '').trim() : undefined,
       generationNotes: cleanGenerationNotes(req.body?.generationNotes) || undefined,
+      postStyle: cleanPostStyle(req.body?.postStyle) || undefined,
       hashtagNotes: String(req.body?.hashtagNotes || '').trim().slice(0, 1000) || undefined,
       postFormat: req.body?.postFormat === 'notes' ? 'notes' : 'standard',
     },
@@ -392,9 +394,10 @@ app.put('/api/plans/:planId/slots/:slotId', h(async (req, res) => {
   for (const key of ['topic', 'pillar', 'format', 'backgroundSelection']) {
     if (patch[key] !== undefined) metadataPatch[key] = patch[key]
   }
+  if (patch.postStyleOverride !== undefined) metadataPatch.postStyleOverride = cleanPostStyle(patch.postStyleOverride) || null
   if (patch.socialAccountIds !== undefined) metadataPatch.socialAccountIds = [...new Set((patch.socialAccountIds || []).map(Number).filter(Number.isFinite))]
   if (patch.removed === true) Object.assign(metadataPatch, { status: 'removed', approvedAt: null })
-  const generationInputsChanged = Object.keys(metadataPatch).some((key) => ['topic', 'pillar', 'format', 'backgroundSelection'].includes(key))
+  const generationInputsChanged = Object.keys(metadataPatch).some((key) => ['topic', 'pillar', 'format', 'backgroundSelection', 'postStyleOverride'].includes(key))
   if (generationInputsChanged) Object.assign(metadataPatch, { post: null, qualityReport: null, approvedAt: null, status: 'planned', error: null })
   else if (metadataPatch.socialAccountIds && slot.post) Object.assign(metadataPatch, { qualityReport: null, approvedAt: null, status: 'needs_attention', error: null })
   if (patch.postPatch && slot.post) {
@@ -428,6 +431,7 @@ app.post('/api/plans/:planId/slots/:slotId/generate', h(async (req, res) => {
     const selected = new Set(slot.socialAccountIds.map(Number))
     const platformNames = accounts.filter((account) => selected.has(Number(account.id))).map((account) => account.platform)
     const trends = plan.config.topicMode === 'general' && plan.config.useTrends ? trendsForPrompt(project.id, []) : []
+    const postStyle = cleanPostStyle(slot.postStyleOverride || plan.config.postStyle)
     const plannerNotes = [
       plan.config.generationNotes,
       `Campaign goal: ${plan.config.goal}. Content pillar: ${slot.pillar}.`,
@@ -446,6 +450,7 @@ app.post('/api/plans/:planId/slots/:slotId/generate', h(async (req, res) => {
         topic: slot.topic,
         contentBucket: slot.pillar,
         generationNotes: plannerNotes,
+        postStyle: postStyle || undefined,
         postFormat: slot.format === 'notes' ? 'notes' : 'standard',
         generationMode: 'planner',
       },
@@ -460,6 +465,7 @@ app.post('/api/plans/:planId/slots/:slotId/generate', h(async (req, res) => {
       topicMode: plan.config.topicMode,
       contentBucket: slot.pillar,
       generationNotes: plan.config.generationNotes,
+      postStyle: postStyle || undefined,
       productEmphasis: plan.config.productEmphasis || undefined,
       productRequirement: plan.config.productEmphasis
         ? { required: true, value: plan.config.productEmphasis }
@@ -766,6 +772,11 @@ app.get('/api/videos', h(async (_req, res) => res.json(listVideos())))
 app.post('/api/videos/import', h(async (req, res) => {
   const { url, pack, folderId } = req.body || {}
   res.json(await importVideoUrl({ url, pack, folderId }))
+}))
+
+app.post('/api/videos/import-files', h(async (req, res) => {
+  const { videos, folderId } = await readVideoImportForm(req)
+  res.json(await importVideoFiles({ videos, folderId }))
 }))
 
 app.post('/api/videos/scrape', h(async (req, res) => {
@@ -1172,6 +1183,62 @@ function updatePlanSlot(projectId, plan, slotId, patch) {
   }
   savePlan(projectId, next)
   return next
+}
+
+function statusError(message, status = 400) {
+  const error = new Error(message)
+  error.status = status
+  return error
+}
+
+async function readRequestBuffer(req, maxBytes) {
+  const chunks = []
+  let total = 0
+  for await (const chunk of req) {
+    total += chunk.length
+    if (total > maxBytes) throw statusError('Video import is too large. Keep each batch under 320 MB.', 413)
+    chunks.push(chunk)
+  }
+  return Buffer.concat(chunks)
+}
+
+function multipartBoundary(req) {
+  const type = String(req.headers['content-type'] || '')
+  const match = type.match(/multipart\/form-data;\s*boundary=(?:"([^"]+)"|([^;]+))/i)
+  if (!match) throw statusError('Use multipart form data for device video imports.')
+  return match[1] || match[2]
+}
+
+async function readVideoImportForm(req) {
+  const boundary = Buffer.from(`--${multipartBoundary(req)}`)
+  const body = await readRequestBuffer(req, 320 * 1024 * 1024)
+  const videos = []
+  let folderId = ''
+  let offset = 0
+  while (offset < body.length) {
+    const start = body.indexOf(boundary, offset)
+    if (start === -1) break
+    let partStart = start + boundary.length
+    if (body.subarray(partStart, partStart + 2).toString() === '--') break
+    if (body.subarray(partStart, partStart + 2).toString() === '\r\n') partStart += 2
+    const next = body.indexOf(boundary, partStart)
+    if (next === -1) break
+    let part = body.subarray(partStart, next)
+    if (part.length >= 2 && part.subarray(part.length - 2).toString() === '\r\n') part = part.subarray(0, part.length - 2)
+    offset = next
+
+    const headerEnd = part.indexOf(Buffer.from('\r\n\r\n'))
+    if (headerEnd === -1) continue
+    const headers = part.subarray(0, headerEnd).toString('latin1')
+    const data = part.subarray(headerEnd + 4)
+    const name = headers.match(/name="([^"]+)"/i)?.[1] || ''
+    const filename = headers.match(/filename="([^"]*)"/i)?.[1] || ''
+    const type = headers.match(/content-type:\s*([^\r\n]+)/i)?.[1]?.trim() || ''
+    if (name === 'folderId') folderId = data.toString('utf8').trim()
+    if (name === 'videos' && filename) videos.push({ name: filename, type, buffer: data })
+  }
+  if (!videos.length) throw statusError('Choose at least one video file to import.')
+  return { videos, folderId }
 }
 
 async function publishContext({ keys, project, post, socialAccounts, scheduledAt, mode, timezone, postType, renderedMedia, video, videoId, fullCaption }) {

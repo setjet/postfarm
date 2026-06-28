@@ -64,9 +64,13 @@ function publicRecord(rec) {
     url: `/api/videos/${encodeURIComponent(rec.id)}`,
     pack: rec.pack || 'Videos',
     source: rec.source || 'imported',
+    mediaType: rec.mediaType || 'video',
     addedAt: rec.addedAt,
     duration: rec.duration ?? null,
     originalUrl: rec.originalUrl || null,
+    originalName: rec.originalName || null,
+    mimeType: rec.mimeType || null,
+    size: Number(rec.size) || null,
     folderId: rec.folderId || VIDEOS_FOLDER_ID,
   }
 }
@@ -174,6 +178,30 @@ function extensionFrom(contentType, url) {
   return '.mp4'
 }
 
+function extensionFromUpload(contentType, name) {
+  const ext = extname(String(name || '')).toLowerCase()
+  if (['.mp4', '.mov', '.m4v', '.webm'].includes(ext)) return ext
+  return extensionFrom(contentType, name)
+}
+
+function safeOriginalName(name) {
+  return basename(String(name || 'video').replace(/\0/g, '')).replace(/[^\w .()[\]-]+/g, '_').slice(0, 180) || 'video'
+}
+
+function validateUpload(file) {
+  const originalName = safeOriginalName(file?.name)
+  const mimeType = String(file?.type || '').trim().toLowerCase()
+  const buffer = Buffer.isBuffer(file?.buffer) ? file.buffer : Buffer.from(file?.buffer || [])
+  if (!isVideoFile(originalName)) throw new Error('Unsupported video format. Use MP4, MOV, WebM, or M4V.')
+  if (mimeType && !mimeType.startsWith('video/') && mimeType !== 'application/octet-stream') {
+    throw new Error('Unsupported video MIME type.')
+  }
+  if (!buffer.length) throw new Error('Video file is empty.')
+  if (buffer.length > MAX_VIDEO_BYTES) throw new Error('Video is too large. Keep background assets under 300 MB.')
+  if (buffer.length < 512 || !looksLikeVideo(buffer, mimeType, originalName)) throw new Error('That file does not look like a supported video.')
+  return { originalName, mimeType: mimeType || null, buffer }
+}
+
 function looksLikeVideo(buf, contentType, url) {
   const type = String(contentType || '').toLowerCase()
   if (type.startsWith('video/')) return true
@@ -252,6 +280,50 @@ function packFromUrl(url) {
 export async function importVideoUrl({ url, pack, folderId }) {
   const rec = await downloadVideo(String(url || '').trim(), { pack, source: 'imported', folderId })
   return { added: 1, video: rec }
+}
+
+export async function importVideoFiles({ videos, folderId }) {
+  const input = Array.isArray(videos) ? videos : []
+  if (!input.length) throw new Error('Choose at least one video file to import.')
+  ensure()
+  const index = videoIndex()
+  const added = []
+  const failed = []
+  for (const item of input.slice(0, 50)) {
+    try {
+      const { originalName, mimeType, buffer } = validateUpload(item)
+      const id = `video:${randomUUID()}`
+      const file = `${id.replace('video:', '')}${extensionFromUpload(mimeType, originalName)}`
+      const filePath = join(MEDIA_DIR, file)
+      writeFileSync(filePath, buffer)
+      const rec = {
+        id,
+        file,
+        pack: 'Imported',
+        source: 'imported',
+        mediaType: 'video',
+        originalName,
+        originalUrl: null,
+        mimeType,
+        size: buffer.length,
+        folderId: safeFolderId(folderId, UNCATEGORIZED_FOLDER_ID),
+        addedAt: new Date().toISOString(),
+        duration: await probeDuration(filePath),
+      }
+      index.unshift(rec)
+      added.push(publicRecord(rec))
+    } catch (error) {
+      failed.push({ name: safeOriginalName(item?.name), error: error.message || String(error) })
+    }
+  }
+  if (!added.length) {
+    const error = new Error(failed[0]?.error || 'No videos could be imported.')
+    error.status = 400
+    error.failed = failed
+    throw error
+  }
+  writeJson(INDEX_PATH, index)
+  return { added: added.length, videos: listVideos(), imported: added, failed }
 }
 
 function tiktokInput(source, limit) {

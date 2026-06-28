@@ -35,6 +35,7 @@ export interface Slideshow {
   topicMode?: 'general' | 'custom';
   topic?: string;
   generationNotes?: string;
+  postStyle?: string;
   hashtagNotes?: string;
   productEmphasis?: string;
   plannerFormat?: PlannerFormat;
@@ -94,6 +95,7 @@ export interface ContentPlanConfig {
   formats: PlannerFormat[];
   backgroundSelections: string[];
   generationNotes: string;
+  postStyle: string;
   productEmphasis: string;
   videoId: string | null;
   approvalMode: 'manual' | 'automatic';
@@ -110,6 +112,7 @@ export interface ContentPlanSlot {
   pillar: string;
   format: PlannerFormat;
   backgroundSelection: string | null;
+  postStyleOverride?: string | null;
   socialAccountIds: number[];
   status: PlannerSlotStatus;
   conflicts: Array<{ postId: string; scheduledAt: string; socialAccounts: number[] }>;
@@ -277,6 +280,10 @@ export interface VideoAsset {
   addedAt: string;
   duration: number | null;
   originalUrl: string | null;
+  originalName?: string | null;
+  mimeType?: string | null;
+  size?: number | null;
+  mediaType?: 'video';
   folderId?: string;
 }
 

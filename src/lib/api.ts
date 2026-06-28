@@ -54,6 +54,21 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return request;
 }
 
+async function formReq<T>(path: string, body: FormData): Promise<T> {
+  const started = performance.now();
+  try {
+    const res = await fetch(`/api${path}`, { method: 'POST', body, cache: 'no-store' });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const error = new Error((payload as { error?: string }).error || res.statusText);
+      throw error;
+    }
+    return payload as T;
+  } finally {
+    if (API_DEBUG) console.info('[api:frontend]', { method: 'POST', path, ms: Math.round(performance.now() - started) });
+  }
+}
+
 export const getConfig = () => req<AppConfig>('/config');
 
 // Global settings only (keys + model + scraper actor).
@@ -107,6 +122,7 @@ export interface GenerateOptions {
   topic?: string;
   folderIds?: string[];
   generationNotes?: string;
+  postStyle?: string;
   hashtagNotes?: string;
 }
 
@@ -200,6 +216,13 @@ export const importVideo = (url: string, pack?: string, folderId?: string) =>
     method: 'POST',
     body: JSON.stringify({ url, pack, folderId }),
   });
+
+export async function importVideos(files: File[], folderId?: string) {
+  const body = new FormData();
+  if (folderId) body.append('folderId', folderId);
+  files.forEach((file) => body.append('videos', file, file.name));
+  return formReq<{ added: number; videos: VideoAsset[]; imported: VideoAsset[]; failed: Array<{ name: string; error: string }> }>('/videos/import-files', body);
+}
 
 export const scrapeVideos = (source: string, count: number, actor?: string, folderId?: string) =>
   req<{ added: number; found: number }>('/videos/scrape', {

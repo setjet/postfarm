@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { GENERIC_HASHTAGS, normalizeHashtags, resolveHashtagStrategy, strategyWithHashtagNotes } from './hashtags.js'
 
-export const QUALITY_REPORT_VERSION = 3
+export const QUALITY_REPORT_VERSION = 4
 
 export const PLATFORM_RULES = Object.freeze({
   instagram: { captionMax: 2200, hashtagWarn: 15, mediaMax: 10, formats: ['carousel', 'image', 'video'] },
@@ -37,6 +37,7 @@ export function qualityVersion(post, context = {}) {
     slides: (post?.slides || []).map((slide) => ({ text: slide.text || '', imageUrl: slide.imageUrl || '' })),
     notesData: post?.notesData || null,
     generationNotes: post?.generationNotes || '',
+    postStyle: post?.postStyle || '',
     hashtagNotes: post?.hashtagNotes || '',
     topic: post?.topic || '',
     productEmphasis: post?.productEmphasis || '',
@@ -143,6 +144,40 @@ function excludedPhrases(notes) {
     if (phrase && !/^(?:emoji|emojis)$/.test(phrase)) phrases.push(phrase)
   }
   return phrases
+}
+
+function instructionText(post) {
+  return [post?.generationNotes, post?.postStyle]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .join('\n')
+}
+
+function requestedSlideCount(style) {
+  const source = String(style || '')
+  const matches = [
+    ...source.matchAll(/\b(\d{1,2})\s*[- ]?slides?\b/gi),
+    ...source.matchAll(/\b(?:exactly|only|just|make|use|with)\s+(\d{1,2})\s+slides?\b/gi),
+  ]
+  for (const match of matches) {
+    const count = Number(match[1])
+    if (count >= 1 && count <= 20) return count
+  }
+  return null
+}
+
+function requestsLowercase(style) {
+  return /\b(?:all\s+)?lower[- ]?case\b|\blowercase\s+(?:only|style|format)\b/i.test(String(style || ''))
+}
+
+function uppercaseFragments(post) {
+  return [
+    post?.hook,
+    post?.caption,
+    ...(post?.slides || []).map((slide) => slide.text),
+    post?.notesData?.noteTitle,
+    ...(post?.notesData?.points || []).flatMap((point) => [point.heading, point.body]),
+  ].filter(Boolean).filter((fragment) => /[A-Z]/.test(String(fragment || '')))
 }
 
 function estimateWrappedLines(text, charsPerLine) {
@@ -266,12 +301,22 @@ export function runQualityGate(post, context = {}) {
   if (PLACEHOLDER_RE.test(text)) add('broken-output', 'Complete AI output', 'blocking', 'The post contains placeholder, JSON, or incomplete-output text.', 'content', 'Replace the placeholder or regenerate the affected content.')
   if (PROMPT_LEAK_RE.test(text)) add('prompt-leak', 'No internal instructions', 'blocking', 'The post appears to expose prompt or internal instruction text.', 'content', 'Remove the leaked instructions and regenerate if needed.')
 
-  const notes = String(post?.generationNotes || '')
-  if (/\b(?:no|avoid|without|do not use|don't use)\s+emojis?\b/i.test(notes) && EMOJI_RE.test(text)) {
-    add('excluded-emoji', 'Generation Notes exclusions', 'blocking', 'Generation Notes exclude emojis, but the post contains one.', 'content', 'Remove the emoji or explicitly change Generation Notes.')
+  const instructions = instructionText(post)
+  if (/\b(?:no|avoid|without|do not use|don't use)\s+emojis?\b/i.test(instructions) && EMOJI_RE.test(text)) {
+    add('excluded-emoji', 'Style and notes exclusions', 'blocking', 'Generation Notes or Post style exclude emojis, but the post contains one.', 'content', 'Remove the emoji or explicitly change the instruction.')
   }
-  for (const phrase of excludedPhrases(notes)) {
-    if (normalizedText(text).includes(normalizedText(phrase))) add(`excluded-${createHash('sha1').update(phrase).digest('hex').slice(0, 8)}`, 'Generation Notes exclusions', 'blocking', `Generation Notes exclude “${phrase}”, but it appears in the post.`, 'content', 'Remove the excluded wording or confirm a different instruction.')
+  for (const phrase of excludedPhrases(instructions)) {
+    if (normalizedText(text).includes(normalizedText(phrase))) add(`excluded-${createHash('sha1').update(phrase).digest('hex').slice(0, 8)}`, 'Style and notes exclusions', 'blocking', `Generation Notes or Post style exclude “${phrase}”, but it appears in the post.`, 'content', 'Remove the excluded wording or confirm a different instruction.')
+  }
+  const requestedSlides = requestedSlideCount(post?.postStyle)
+  if (requestedSlides && post?.format !== 'notes' && post?.plannerFormat !== 'image' && post?.plannerFormat !== 'video' && slides.length && slides.length !== requestedSlides) {
+    add('style-slide-count', 'Post style slide count', 'warning', `Post style asks for ${requestedSlides} slide${requestedSlides === 1 ? '' : 's'}, but the post has ${slides.length}.`, 'slides', 'Regenerate or adjust the slide count if the requested layout is still compatible.')
+  }
+  if (requestsLowercase(post?.postStyle)) {
+    const fragments = uppercaseFragments(post)
+    if (fragments.length >= 2 || (fragments.length === 1 && slides.length <= 2)) {
+      add('style-lowercase', 'Post style casing', 'warning', 'Post style asks for lowercase copy, but multiple text fields contain uppercase letters.', 'content', 'Review capitalization or update the style preference if proper nouns should stay capitalized.')
+    }
   }
   const requirements = contentRequirements(post, context)
   if (requirements.product && !productMentioned(text, requirements.product)) {

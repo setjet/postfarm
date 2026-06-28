@@ -37,6 +37,7 @@ export function GenerateModal({ defaultPacks, initialCount, initialOptions, gene
   const [topicMode, setTopicMode] = useState<'general' | 'custom'>(initialOptions?.topicMode || 'general');
   const [topic, setTopic] = useState(initialOptions?.topic || '');
   const [generationNotes, setGenerationNotes] = useState(initialOptions?.generationNotes || '');
+  const [postStyle, setPostStyle] = useState(initialOptions?.postStyle || '');
   const [hashtagNotes, setHashtagNotes] = useState(initialOptions?.hashtagNotes || '');
   const [topicError, setTopicError] = useState<string | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -115,6 +116,7 @@ export function GenerateModal({ defaultPacks, initialCount, initialOptions, gene
       topicMode,
       topic: topicMode === 'custom' ? cleanTopic : undefined,
       generationNotes: generationNotes.trim() || undefined,
+      postStyle: postStyle.trim() || undefined,
       hashtagNotes: hashtagNotes.trim() || undefined,
     });
   };
@@ -255,6 +257,24 @@ export function GenerateModal({ defaultPacks, initialCount, initialOptions, gene
                 className="w-full resize-none rounded-lg border border-line bg-raised px-3 py-2 text-[12px] text-ink outline-none placeholder:text-ink-6 focus:border-line-2 disabled:opacity-50"
               />
               <p className="mt-1 text-[11px] leading-relaxed text-ink-6">Optional instructions for what to include, avoid, or emphasise.</p>
+            </div>
+
+            <div>
+              <div className="mb-1.5 flex items-center justify-between gap-3">
+                <label htmlFor="post-style" className="text-[11px] font-semibold text-ink-4">Post style</label>
+                <span className="text-[10px] tabular-nums text-ink-6">{postStyle.length}/2000</span>
+              </div>
+              <textarea
+                id="post-style"
+                value={postStyle}
+                onChange={(event) => setPostStyle(event.target.value.slice(0, 2000))}
+                maxLength={2000}
+                rows={3}
+                placeholder="e.g. 2-slide post: first slide is a curiosity hook, second slide has 3 short bullets and no emojis"
+                disabled={generating}
+                className="w-full resize-none rounded-lg border border-line bg-raised px-3 py-2 text-[12px] text-ink outline-none placeholder:text-ink-6 focus:border-line-2 disabled:opacity-50"
+              />
+              <p className="mt-1 text-[11px] leading-relaxed text-ink-6">Optional. Describe the format, tone, layout, or style you want these posts to follow.</p>
             </div>
 
             <div>

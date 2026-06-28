@@ -21,6 +21,39 @@ function seed(id, file, folderId = 'folder:videos') {
   return join(mediaDir, file)
 }
 
+function fakeMp4(size = 2048) {
+  const buffer = Buffer.alloc(size)
+  buffer.write('ftyp', 4, 'ascii')
+  return buffer
+}
+
+test('device video imports store local metadata in the selected folder', async () => {
+  const result = await videos.importVideoFiles({
+    folderId: 'folder:uncategorized',
+    videos: [{ name: 'Launch Clip.mp4', type: 'video/mp4', buffer: fakeMp4() }],
+  })
+  assert.equal(result.added, 1)
+  assert.equal(result.failed.length, 0)
+  const imported = result.imported[0]
+  assert.equal(imported.originalName, 'Launch Clip.mp4')
+  assert.equal(imported.mimeType, 'video/mp4')
+  assert.equal(imported.size, 2048)
+  assert.equal(imported.folderId, 'folder:uncategorized')
+  assert.equal(existsSync(videos.getVideoFile(imported.id)), true)
+})
+
+test('device video imports report unsupported files without dropping valid ones', async () => {
+  const result = await videos.importVideoFiles({
+    videos: [
+      { name: 'good.webm', type: 'video/webm', buffer: fakeMp4() },
+      { name: '../bad.txt', type: 'text/plain', buffer: Buffer.from('not a video') },
+    ],
+  })
+  assert.equal(result.added, 1)
+  assert.equal(result.failed.length, 1)
+  assert.equal(result.failed[0].name, 'bad.txt')
+})
+
 test('video deletion removes its managed file and metadata', () => {
   const path = seed('video:one', 'one.mp4')
   videos.removeVideo('video:one')

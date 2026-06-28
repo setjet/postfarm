@@ -25,6 +25,21 @@ test('quality severity blocks explicit exclusions and preserves warnings separat
   assert.ok(report.findings.some((item) => item.id === 'hashtags-format' && item.severity === 'warning'))
 })
 
+test('post style checks measurable style issues without blocking vague preferences', () => {
+  const report = runQualityGate(post({
+    postStyle: 'exactly 3 slides\nlowercase only\nno emojis',
+    hook: 'A Useful AI Workflow',
+    caption: `Save this ${String.fromCodePoint(0x1F680)}`,
+    slides: [
+      { id: 'slide-1', text: 'Start Here', bgFrom: '#111827', bgTo: '#020617' },
+      { id: 'slide-2', text: 'Use It Today', bgFrom: '#111827', bgTo: '#020617' },
+    ],
+  }))
+  assert.ok(report.findings.some((item) => item.id === 'excluded-emoji' && item.severity === 'blocking'))
+  assert.ok(report.findings.some((item) => item.id === 'style-slide-count' && item.severity === 'warning'))
+  assert.ok(report.findings.some((item) => item.id === 'style-lowercase' && item.severity === 'warning'))
+})
+
 test('overflow detection covers standard slides and complete Notes content', () => {
   assert.ok(detectTextOverflow(post({ slides: [{ text: 'word '.repeat(1200) }] })).length)
   const notes = post({

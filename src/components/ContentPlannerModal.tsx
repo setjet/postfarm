@@ -39,7 +39,7 @@ function initialConfig(accounts: SocialAccount[]): ContentPlanConfig {
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC', postingDays: [1, 2, 3, 4, 5],
     postsPerDay: 1, preferredTimeMode: 'ai', preferredTimes: ['10:00'], socialAccountIds: accounts.map((account) => account.id),
     topicMode: 'general', topics: [], contentPillars: [{ name: 'Education', percentage: 50 }, { name: 'Engagement', percentage: 50 }],
-    formats: ['standard'], backgroundSelections: [], generationNotes: '', productEmphasis: '',
+    formats: ['standard'], backgroundSelections: [], generationNotes: '', postStyle: '', productEmphasis: '',
     videoId: null, approvalMode: 'manual', useTrends: true,
   };
 }
@@ -175,7 +175,9 @@ export function ContentPlannerModal({ accounts, onClose, onScheduled, initialPla
     if (localDate === null) return;
     const localTime = window.prompt('Time (HH:mm)', slot.localTime);
     if (localTime === null) return;
-    await updateSlot(slot, { topic: topic.trim(), pillar: pillar.trim(), format, localDate, localTime });
+    const postStyleOverride = window.prompt('Post style override (optional)', slot.postStyleOverride || '');
+    if (postStyleOverride === null) return;
+    await updateSlot(slot, { topic: topic.trim(), pillar: pillar.trim(), format, localDate, localTime, postStyleOverride: postStyleOverride.trim() || null });
   };
 
   const approveSlot = async (slot: ContentPlanSlot) => {
@@ -299,7 +301,7 @@ function ConfigurePlan({ config, accounts, videos, disabled, mutate, onPreview }
     <section><Label>Topics and content pillars</Label><div className="mb-3 flex gap-2"><Button size="sm" variant={config.topicMode === 'general' ? 'primary' : 'secondary'} onClick={() => mutate('topicMode','general')}>General + trends</Button><Button size="sm" variant={config.topicMode === 'custom' ? 'primary' : 'secondary'} onClick={() => mutate('topicMode','custom')}>Custom topics</Button></div><div className="grid gap-3 sm:grid-cols-2"><Field label="Topics (one per line)"><textarea rows={4} value={config.topics.join('\n')} onChange={(event) => mutate('topics', event.target.value.split('\n').map((value) => value.trim()).filter(Boolean))} placeholder={config.topicMode === 'custom' ? 'Enter exact topics' : 'Optional proposed topics'} className="textarea" /></Field><Field label="Pillars (Name: percentage)"><textarea rows={4} value={config.contentPillars.map((pillar) => `${pillar.name}: ${pillar.percentage}`).join('\n')} onChange={(event) => mutate('contentPillars', event.target.value.split('\n').map((line) => { const [name, value] = line.split(':'); return { name: name?.trim(), percentage: Number(value) || 0 }; }).filter((item) => item.name))} className="textarea" /></Field></div></section>
     <section><Label>Format mix</Label><div className="flex flex-wrap gap-2">{FORMATS.map((format) => <Button key={format.id} size="sm" variant={config.formats.includes(format.id) ? 'primary' : 'secondary'} onClick={() => mutate('formats', toggle(config.formats, format.id))}>{format.label}</Button>)}</div>{config.formats.includes('video') && <div className="mt-3"><Field label="Background video"><select value={config.videoId || ''} onChange={(event) => mutate('videoId', event.target.value || null)} className="input"><option value="">Select a video</option>{videos.map((video) => <option key={video.id} value={video.id}>{video.pack}{video.duration ? ` (${Math.round(video.duration)}s)` : ''}</option>)}</select></Field></div>}</section>
     <section><Label>Library folders and background packs</Label><PackPicker selected={config.backgroundSelections} onChange={(value) => mutate('backgroundSelections', value)} disabled={disabled} /></section>
-    <section className="grid gap-3 sm:grid-cols-2"><Field label="Generation notes"><textarea rows={4} maxLength={2000} value={config.generationNotes} onChange={(event) => mutate('generationNotes', event.target.value)} placeholder="e.g. no emojis; avoid income claims" className="textarea" /></Field><Field label="Required product or offer (optional)"><textarea rows={4} value={config.productEmphasis} onChange={(event) => mutate('productEmphasis', event.target.value)} placeholder="Leave blank unless every post must mention it" className="textarea" /></Field></section>
+    <section className="grid gap-3 sm:grid-cols-2"><Field label="Generation notes"><textarea rows={4} maxLength={2000} value={config.generationNotes} onChange={(event) => mutate('generationNotes', event.target.value)} placeholder="e.g. no emojis; avoid income claims" className="textarea" /></Field><Field label="Post style"><textarea rows={4} maxLength={2000} value={config.postStyle} onChange={(event) => mutate('postStyle', event.target.value)} placeholder="e.g. 2-slide post: curiosity hook, then 3 short bullets" className="textarea" /><p className="mt-1 text-[11px] font-normal normal-case leading-relaxed tracking-normal text-ink-6">Optional. Describe the format, tone, layout, or style you want these posts to follow.</p></Field><Field label="Required product or offer (optional)"><textarea rows={4} value={config.productEmphasis} onChange={(event) => mutate('productEmphasis', event.target.value)} placeholder="Leave blank unless every post must mention it" className="textarea" /></Field></section>
     <section><Label>Approval</Label><div className="flex gap-2"><Button variant={config.approvalMode === 'manual' ? 'primary' : 'secondary'} onClick={() => mutate('approvalMode','manual')}>Manual approval</Button><Button variant={config.approvalMode === 'automatic' ? 'primary' : 'secondary'} onClick={() => mutate('approvalMode','automatic')}>Automatic scheduling</Button></div>{config.approvalMode === 'automatic' && <div className="mt-3 flex gap-2 rounded-lg border border-warning/30 bg-amber-500/10 p-3 text-[11px] leading-relaxed text-ink-3"><AlertTriangle size={15} className="shrink-0 text-warning" /> Passing posts will be scheduled after generation. A second explicit confirmation is required before anything is sent to Postbridge.</div>}</section>
     <div className="flex justify-end border-t border-line pt-5"><Button variant="primary" icon={disabled ? <Loader2 size={13} className="animate-spin" /> : <CalendarDays size={13} />} onClick={onPreview} disabled={disabled}>Preview calendar</Button></div>
   </div>;
@@ -307,7 +309,7 @@ function ConfigurePlan({ config, accounts, videos, disabled, mutate, onPreview }
 
 function PreviewPlan({ preview, busy, onCreate }: { preview: Pick<ContentPlan,'config'|'slots'|'progress'>; busy: boolean; onCreate: () => void }) {
   const conflicts = preview.slots.filter((slot) => slot.conflicts.length).length;
-  return <div className="p-5 sm:p-6"><div className="mb-4 flex items-center justify-between"><div><h3 className="text-[14px] font-semibold text-ink">Calendar preview</h3><p className="text-[11px] text-ink-6">No AI calls have been made. Review {preview.slots.length} proposed slots first.</p></div><Button variant="primary" icon={busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} onClick={onCreate} disabled={busy}>Confirm plan</Button></div>{conflicts > 0 && <div className="mb-4 rounded-lg border border-danger/25 bg-red-500/10 px-3 py-2 text-[11px] text-danger">{conflicts} slot{conflicts === 1 ? '' : 's'} conflict with the current Postbridge schedule. Move them before scheduling.</div>}<div className="space-y-2">{preview.slots.map((slot) => <SlotSummary key={slot.id} slot={slot} accounts={[]} />)}</div></div>;
+  return <div className="p-5 sm:p-6"><div className="mb-4 flex items-center justify-between"><div><h3 className="text-[14px] font-semibold text-ink">Calendar preview</h3><p className="text-[11px] text-ink-6">No AI calls have been made. Review {preview.slots.length} proposed slots first.</p></div><Button variant="primary" icon={busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} onClick={onCreate} disabled={busy}>Confirm plan</Button></div>{preview.config.postStyle && <div className="mb-4 rounded-lg border border-line bg-raised px-3 py-2 text-[11px] text-ink-4"><span className="font-semibold text-ink-3">Style:</span> {preview.config.postStyle}</div>}{conflicts > 0 && <div className="mb-4 rounded-lg border border-danger/25 bg-red-500/10 px-3 py-2 text-[11px] text-danger">{conflicts} slot{conflicts === 1 ? '' : 's'} conflict with the current Postbridge schedule. Move them before scheduling.</div>}<div className="space-y-2">{preview.slots.map((slot) => <SlotSummary key={slot.id} slot={slot} planStyle={preview.config.postStyle || ''} />)}</div></div>;
 }
 
 function ManagePlan({ plan, videos, busy, generatingSlotIds, onBatch, onEdit, onGenerate, onRemove, onApprove, onSchedule, onFix, onRecheck, onConfirmAutomatic, onDelete, onPreview }: { plan: ContentPlan; videos: VideoAsset[]; busy: boolean; generatingSlotIds: Set<string>; onBatch: (kind:'generate'|'retry'|'approve'|'schedule') => void; onEdit:(slot:ContentPlanSlot)=>void; onGenerate:(slot:ContentPlanSlot)=>Promise<void>|void; onRemove:(slot:ContentPlanSlot)=>void; onApprove:(slot:ContentPlanSlot)=>void; onSchedule:(slot:ContentPlanSlot)=>void; onFix:(slot:ContentPlanSlot)=>Promise<void>|void; onRecheck:(slot:ContentPlanSlot)=>Promise<void>|void; onConfirmAutomatic:()=>void; onDelete:()=>void; onPreview:(slot:ContentPlanSlot, trigger:HTMLElement)=>void }) {
@@ -354,6 +356,7 @@ function ManagePlan({ plan, videos, busy, generatingSlotIds, onBatch, onEdit, on
       {visibleSlots.map((slot) => <PlanSlotRow
         key={slot.id}
         slot={slot}
+        planStyle={plan.config.postStyle || ''}
         busy={busy}
         generating={
           slot.status === 'generating'
@@ -390,12 +393,13 @@ function slotBadge(slot: ContentPlanSlot) {
   return { label: 'Planned', className: 'border-line bg-white/[0.03] text-ink-5' };
 }
 
-function PlanSlotRow({ slot, busy, generating, expanded, menuOpen, videoAvailable, onToggle, onToggleMenu, onEdit, onGenerate, onRemove, onApprove, onSchedule, onFix, onRecheck, onPreview }: { slot: ContentPlanSlot; busy:boolean; generating:boolean; expanded:boolean; menuOpen:boolean; videoAvailable:boolean; onToggle:()=>void; onToggleMenu:()=>void; onEdit:()=>void; onGenerate:()=>void; onRemove:()=>void; onApprove:()=>void; onSchedule:()=>void; onFix:()=>Promise<void>|void; onRecheck:()=>Promise<void>|void; onPreview:(trigger:HTMLElement)=>void }) {
+function PlanSlotRow({ slot, planStyle, busy, generating, expanded, menuOpen, videoAvailable, onToggle, onToggleMenu, onEdit, onGenerate, onRemove, onApprove, onSchedule, onFix, onRecheck, onPreview }: { slot: ContentPlanSlot; planStyle: string; busy:boolean; generating:boolean; expanded:boolean; menuOpen:boolean; videoAvailable:boolean; onToggle:()=>void; onToggleMenu:()=>void; onEdit:()=>void; onGenerate:()=>void; onRemove:()=>void; onApprove:()=>void; onSchedule:()=>void; onFix:()=>Promise<void>|void; onRecheck:()=>Promise<void>|void; onPreview:(trigger:HTMLElement)=>void }) {
   const canEdit = !['scheduling','scheduled'].includes(slot.status);
   const preview = plannerPreviewAvailability(slot, videoAvailable);
   const badge = slotBadge(slot);
   const date = new Date(slot.scheduledAt).toLocaleString(undefined,{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
   const regionId = `planner-slot-${slot.id}`;
+  const effectiveStyle = slot.postStyleOverride || slot.post?.postStyle || planStyle;
   return <article className="relative border-b border-line last:border-b-0">
     <div className="flex items-center gap-2 py-3">
       <button type="button" aria-label={`Preview ${slot.topic}`} title={preview.reason || 'Preview post'} disabled={!preview.enabled} onClick={(event) => onPreview(event.currentTarget)} className="relative h-[72px] w-[48px] shrink-0 overflow-hidden rounded-md bg-black/25 outline-none focus-visible:ring-2 focus-visible:ring-accent/70 disabled:cursor-not-allowed disabled:opacity-50">
@@ -432,6 +436,7 @@ function PlanSlotRow({ slot, busy, generating, expanded, menuOpen, videoAvailabl
             <div><dt className="text-[9px] uppercase tracking-wide text-ink-6">Format</dt><dd className="mt-0.5 capitalize text-ink-3">{slot.format}</dd></div>
             <div><dt className="text-[9px] uppercase tracking-wide text-ink-6">Accounts</dt><dd className="mt-0.5 text-ink-3">{slot.socialAccountIds.length}</dd></div>
             <div className="col-span-2"><dt className="text-[9px] uppercase tracking-wide text-ink-6">Background folder</dt><dd className="mt-0.5 truncate text-ink-3">{slot.backgroundSelection || 'Automatic selection'}</dd></div>
+            {effectiveStyle && <div className="col-span-2"><dt className="text-[9px] uppercase tracking-wide text-ink-6">Style</dt><dd className="mt-0.5 line-clamp-2 text-ink-3">{effectiveStyle}</dd></div>}
           </dl>
           {slot.post?.slides.length ? <p className="mt-3 text-[10px] text-ink-6">{slot.post.slides.length} rendered slide{slot.post.slides.length === 1 ? '' : 's'} · Open Preview to inspect full media.</p> : null}
         </div>
@@ -466,8 +471,9 @@ function FindingGroup({ label, findings, className }: { label: string; findings:
   return <div className="mt-3"><h4 className={`text-[9px] font-semibold uppercase tracking-wider ${className}`}>{label}</h4><ul className="mt-1 divide-y divide-line">{findings.map((finding) => <li key={finding.id} className="py-2"><p className="text-[10px] font-medium text-ink-3">{finding.check}{finding.slideIndex !== undefined ? ` · Slide ${finding.slideIndex + 1}` : ''}</p><p className="mt-0.5 text-[10px] leading-relaxed text-ink-5">{finding.explanation}</p></li>)}</ul></div>;
 }
 
-function SlotSummary({ slot }: { slot: ContentPlanSlot; accounts: SocialAccount[] }) {
-  return <div className="grid gap-2 rounded-lg border border-line bg-raised px-3 py-2.5 sm:grid-cols-[9rem_1fr_auto]"><div className="text-[11px] text-ink-3"><Clock size={11} className="mr-1 inline" /> {slot.localDate} · {slot.localTime}</div><div className="min-w-0"><div className="truncate text-[11px] font-medium text-ink-3">{slot.topic}</div><div className="text-[9px] capitalize text-ink-6">{slot.pillar} · {slot.format} · {slot.backgroundSelection || 'automatic background'}</div></div><div className="text-[9px] uppercase tracking-wide text-ink-6">{slot.conflicts.length ? <span className="text-danger">Conflict</span> : 'Planned'}</div></div>;
+function SlotSummary({ slot, planStyle = '' }: { slot: ContentPlanSlot; planStyle?: string }) {
+  const effectiveStyle = slot.postStyleOverride || slot.post?.postStyle || planStyle;
+  return <div className="grid gap-2 rounded-lg border border-line bg-raised px-3 py-2.5 sm:grid-cols-[9rem_1fr_auto]"><div className="text-[11px] text-ink-3"><Clock size={11} className="mr-1 inline" /> {slot.localDate} · {slot.localTime}</div><div className="min-w-0"><div className="truncate text-[11px] font-medium text-ink-3">{slot.topic}</div><div className="text-[9px] capitalize text-ink-6">{slot.pillar} · {slot.format} · {slot.backgroundSelection || 'automatic background'}</div>{effectiveStyle && <div className="mt-1 line-clamp-1 text-[9px] normal-case text-ink-5">Style: {effectiveStyle}</div>}</div><div className="text-[9px] uppercase tracking-wide text-ink-6">{slot.conflicts.length ? <span className="text-danger">Conflict</span> : 'Planned'}</div></div>;
 }
 
 function Label({ children }: { children: React.ReactNode }) { return <h3 className="mb-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-5">{children}</h3>; }
